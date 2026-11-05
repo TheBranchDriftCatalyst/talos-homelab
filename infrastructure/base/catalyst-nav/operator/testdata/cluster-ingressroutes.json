@@ -1,0 +1,7596 @@
+{
+ "apiVersion": "v1",
+ "items": [
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "GitOps Continuous Delivery",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Infrastructure",
+     "gethomepage.dev/icon": "argocd.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "ArgoCD",
+     "gethomepage.dev/siteMonitor": "http://argocd-server.argocd.svc.cluster.local"
+    },
+    "name": "argocd-server",
+    "namespace": "argocd"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`argocd.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-argocd",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "argocd-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "argocd-server-http",
+    "namespace": "argocd"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`argocd.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "argocd-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+     "external-dns.alpha.kubernetes.io/hostname": "auth.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space",
+     "gethomepage.dev/description": "SSO / identity",
+     "gethomepage.dev/group": "Infra",
+     "gethomepage.dev/icon": "authentik",
+     "gethomepage.dev/name": "Authentik"
+    },
+    "name": "authentik",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`auth.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "authentik-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "authentik-http",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`auth.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "authentik-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "authentik-local",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`auth.talos00`)",
+      "services": [
+       {
+        "name": "authentik-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "authentik-local-websecure",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`auth.talos00`)",
+      "services": [
+       {
+        "name": "authentik-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "authentik-outpost-priv",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "(HostRegexp(`^[a-z0-9.-]+\\.talos00$`) || HostRegexp(`^[a-z0-9-]+\\.priv\\.knowledgedump\\.space$`)) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 1000,
+      "services": [
+       {
+        "name": "authentik-server",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "bindery-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bindery.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "booksonic-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`booksonic.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+     "external-dns.alpha.kubernetes.io/hostname": "bg.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "name": "catalyst-bg",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bg.knowledgedump.space`)",
+      "services": [
+       {
+        "name": "catalyst-bg",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "catalyst-bg-http",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bg.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "catalyst-bg",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "chaptarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`chaptarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "crowdsec-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`crowdsec.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "dbgate-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`dbgate.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "frigate-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`frigate.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "guacamole-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`guacamole.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "haven-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`haven.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "headlamp-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`headlamp.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-apps-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`apps.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-arrs-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`arrs.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-data-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`data.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-home-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`home.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-infra-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`infra.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-llm-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`llm.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-master-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "homepage-obs-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`obs.homepage.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "hubble-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`hubble.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "hyperdx-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`hyperdx.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "irc-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`irc.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "kube-ops-view-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`kube-ops-view.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "kubeview-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`kubeview.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "libation-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`libation.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "librarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`librarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "livrarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`livrarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "maintainerr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`maintainerr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "metube-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`metube.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "mylar3-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`mylar3.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "omnitools-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`omnitools.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "opengym-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`opengym.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "plausible-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`plausible.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "posterizarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`posterizarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "posterr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`posterr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "prowlarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`prowlarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "pulsarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`pulsarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "qbittorrent-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`qbittorrent.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "radarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`radarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "sabnzbd-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`sabnzbd.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "scrypted-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`scrypted.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "securexng-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`securexng.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "seerr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`seerr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "sonarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`sonarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "stackarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`stackarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "storyteller-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`storyteller.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "tautulli-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tautulli.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "tdarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tdarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "traefik-dashboard-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`traefik.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "tubesync-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tubesync.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "windows-vnc-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`windows-vnc.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/component": "callback-route",
+     "app.kubernetes.io/instance": "talos00",
+     "app.kubernetes.io/name": "authentik-outpost"
+    },
+    "name": "youtarr-outpost-lan",
+    "namespace": "authentik"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`youtarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)",
+      "priority": 2000,
+      "services": [
+       {
+        "name": "talos00-outpost",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Bluetooth presence radar",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "mdi-radar",
+     "gethomepage.dev/name": "BT Radar"
+    },
+    "name": "bt-radar",
+    "namespace": "bt-radar"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bt-radar.talos00`)",
+      "services": [
+       {
+        "name": "bt-collector",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Privacy-friendly web analytics",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Analytics",
+     "gethomepage.dev/icon": "plausible-analytics.png",
+     "gethomepage.dev/name": "Plausible",
+     "gethomepage.dev/siteMonitor": "http://plausible.crossplane-demo.svc.cluster.local:8000"
+    },
+    "labels": {
+     "app.kubernetes.io/name": "plausible",
+     "app.kubernetes.io/part-of": "plausible"
+    },
+    "name": "plausible",
+    "namespace": "crossplane-demo"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`plausible.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "plausible",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "plausible",
+     "app.kubernetes.io/part-of": "plausible"
+    },
+    "name": "plausible-http",
+    "namespace": "crossplane-demo"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`plausible.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "plausible",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "plausible",
+     "app.kubernetes.io/part-of": "plausible"
+    },
+    "name": "plausible-public-redirect",
+    "namespace": "crossplane-demo"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`analytics.knowledgedump.space`) && (PathPrefix(`/js/`) || PathPrefix(`/api/event`))",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "plausible",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+     "external-dns.alpha.kubernetes.io/hostname": "analytics.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "labels": {
+     "app.kubernetes.io/name": "plausible",
+     "app.kubernetes.io/part-of": "plausible"
+    },
+    "name": "plausible-public-tracking",
+    "namespace": "crossplane-demo"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`analytics.knowledgedump.space`) && (PathPrefix(`/js/`) || PathPrefix(`/api/event`))",
+      "services": [
+       {
+        "name": "plausible",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "IPS decisions, alerts + metrics (local, pre-Console)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Infrastructure",
+     "gethomepage.dev/name": "CrowdSec"
+    },
+    "name": "crowdsec-web-ui",
+    "namespace": "crowdsec"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`crowdsec.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "crowdsec-web-ui",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "crowdsec-web-ui-http",
+    "namespace": "crowdsec"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`crowdsec.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "crowdsec-web-ui",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Web database manager",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Databases",
+     "gethomepage.dev/icon": "dbgate.png",
+     "gethomepage.dev/name": "DbGate",
+     "gethomepage.dev/siteMonitor": "http://dbgate.databases.svc.cluster.local:3000"
+    },
+    "name": "dbgate",
+    "namespace": "databases"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`dbgate.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-dbgate",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "dbgate",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "dbgate-http",
+    "namespace": "databases"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`dbgate.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "dbgate",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Audiobook & Podcast Server",
+     "gethomepage.dev/group": "Audiobooks",
+     "gethomepage.dev/icon": "audiobookshelf.png",
+     "gethomepage.dev/name": "Audiobookshelf",
+     "gethomepage.dev/siteMonitor": "http://audiobookshelf.media-experimental.svc.cluster.local:80",
+     "gethomepage.dev/weight": "10",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_AUDIOBOOKSHELF_KEY}}",
+     "gethomepage.dev/widget.type": "audiobookshelf"
+    },
+    "name": "app-template"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`audiobookshelf.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "audiobookshelf",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "audiobookshelf-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`audiobookshelf.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "audiobookshelf",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "bindery-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bindery.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "bindery",
+        "port": 8787
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Ebook / Audiobook / Comic Library + Reader",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Books & Comics",
+     "gethomepage.dev/icon": "bookorbit.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "BookOrbit",
+     "gethomepage.dev/weight": "13"
+    },
+    "name": "bookorbit"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bookorbit.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "bookorbit",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "bookorbit-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`bookorbit.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "bookorbit",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "booksonic-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`booksonic.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "booksonic",
+        "port": 4040
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "chaptarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`chaptarr.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "chaptarr",
+        "port": 8789
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "NVR with realtime object detection",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "frigate.png",
+     "gethomepage.dev/name": "Frigate",
+     "gethomepage.dev/siteMonitor": "http://frigate.scratch.svc.cluster.local:5000",
+     "gethomepage.dev/widget.type": "frigate"
+    },
+    "labels": {
+     "app": "frigate"
+    },
+    "name": "frigate"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`frigate.talos00`) && PathPrefix(`/api`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "frigate",
+        "port": 5000
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`frigate.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "frigate",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "frigate"
+    },
+    "name": "frigate-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`frigate.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "frigate",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Clientless remote desktop gateway",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Gaming",
+     "gethomepage.dev/icon": "guacamole.png",
+     "gethomepage.dev/name": "Apache Guacamole",
+     "gethomepage.dev/siteMonitor": "http://guacamole.gaming.svc.cluster.local:8080"
+    },
+    "labels": {
+     "app": "guacamole"
+    },
+    "name": "guacamole"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`guacamole.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "guacamole",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "guacamole-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`guacamole.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "guacamole",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Home Automation",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "home-assistant.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Home Assistant",
+     "gethomepage.dev/siteMonitor": "http://homeassistant.home-automation.svc.cluster.local:8123",
+     "gethomepage.dev/weight": "1",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_HOMEASSISTANT_KEY}}",
+     "gethomepage.dev/widget.type": "homeassistant"
+    },
+    "labels": {
+     "app": "homeassistant"
+    },
+    "name": "homeassistant"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`homeassistant.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "homeassistant",
+        "port": 8123
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "homeassistant"
+    },
+    "name": "homeassistant-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`homeassistant.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "homeassistant",
+        "port": 8123
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "homepage"
+   },
+   "spec": {
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`home.homepage.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "homepage-home",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "homepage-http"
+   },
+   "spec": {
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`home.homepage.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "homepage-home",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "catalyst-rum"
+    },
+    "name": "hyperdx-rum"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "PathPrefix(`/hyperdx-rum/`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       },
+       {
+        "name": "hyperdx-rum-strip",
+        "namespace": "monitoring"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "catalyst-rum",
+        "port": 80
+       }
+      ]
+     }
+    ],
+    "tls": {}
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "catalyst-rum"
+    },
+    "name": "hyperdx-rum-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "PathPrefix(`/hyperdx-rum/`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       },
+       {
+        "name": "hyperdx-rum-strip",
+        "namespace": "monitoring"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "catalyst-rum",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "catalyst-rum"
+    },
+    "name": "hyperdx-rum-public"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`boomtime.knowledgedump.space`) && PathPrefix(`/hyperdx-rum/`)",
+      "middlewares": [
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       },
+       {
+        "name": "hyperdx-rum-strip",
+        "namespace": "monitoring"
+       }
+      ],
+      "priority": 10100,
+      "services": [
+       {
+        "name": "catalyst-rum",
+        "port": 80
+       }
+      ]
+     }
+    ],
+    "tls": {}
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Media Server (Open Source)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "jellyfin.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Jellyfin",
+     "gethomepage.dev/siteMonitor": "http://jellyfin.media.svc.cluster.local:8096",
+     "gethomepage.dev/weight": "2",
+     "gethomepage.dev/widget.enableBlocks": "true",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_JELLYFIN_KEY}}",
+     "gethomepage.dev/widget.type": "jellyfin"
+    },
+    "labels": {
+     "app": "jellyfin"
+    },
+    "name": "jellyfin"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`jellyfin.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-jellyfin",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "jellyfin",
+        "port": 8096
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "jellyfin"
+    },
+    "name": "jellyfin-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`jellyfin.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "jellyfin",
+        "port": 8096
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "kavita-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`kavita.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "kavita",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "komga-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`komga.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "komga",
+        "port": 25600
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "libation-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`libation.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "libation",
+        "port": 6080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "librarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`librarr.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "librarr",
+        "port": 5050
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+     "external-dns.alpha.kubernetes.io/hostname": "linkwarden.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "labels": {
+     "app": "linkwarden"
+    },
+    "name": "linkwarden"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`linkwarden.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "bot-wrangler",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "linkwarden",
+        "namespace": "home-automation",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "linkwarden"
+    },
+    "name": "linkwarden-http-redirect"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`linkwarden.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "linkwarden",
+        "namespace": "home-automation",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Bookmark & link archive",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "linkwarden.png",
+     "gethomepage.dev/name": "Linkwarden",
+     "gethomepage.dev/siteMonitor": "http://linkwarden.home-automation.svc.cluster.local:3000"
+    },
+    "labels": {
+     "app": "linkwarden"
+    },
+    "name": "linkwarden-local"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`linkwarden.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "linkwarden",
+        "namespace": "home-automation",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "linkwarden"
+    },
+    "name": "linkwarden-local-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`linkwarden.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "linkwarden",
+        "namespace": "home-automation",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "livrarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`livrarr.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "livrarr",
+        "port": 8789
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Media Cleanup Automation",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "maintainerr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Maintainerr",
+     "gethomepage.dev/siteMonitor": "http://maintainerr.media.svc.cluster.local:6246",
+     "gethomepage.dev/weight": "51"
+    },
+    "labels": {
+     "app": "maintainerr"
+    },
+    "name": "maintainerr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`maintainerr.talos00`) && PathPrefix(`/api`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "maintainerr",
+        "port": 6246
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`maintainerr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "maintainerr",
+        "port": 6246
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "maintainerr"
+    },
+    "name": "maintainerr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`maintainerr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "maintainerr",
+        "port": 6246
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "yt-dlp web downloader",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Downloads",
+     "gethomepage.dev/icon": "metube.png",
+     "gethomepage.dev/name": "MeTube",
+     "gethomepage.dev/siteMonitor": "http://metube.downloads.svc.cluster.local:8081"
+    },
+    "labels": {
+     "app": "metube"
+    },
+    "name": "metube"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`metube.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "metube",
+        "port": 8081
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "metube"
+    },
+    "name": "metube-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`metube.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "metube",
+        "port": 8081
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "mylar3-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`mylar3.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "mylar3",
+        "port": 8090
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Self-hosted utility toolbox",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "omni-tools.png",
+     "gethomepage.dev/name": "OmniTools",
+     "gethomepage.dev/siteMonitor": "http://omnitools.home-automation.svc.cluster.local:80"
+    },
+    "labels": {
+     "app": "omnitools"
+    },
+    "name": "omnitools"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`omnitools.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "omnitools",
+        "namespace": "home-automation",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "omnitools"
+    },
+    "name": "omnitools-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`omnitools.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "omnitools",
+        "namespace": "home-automation",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Media Server",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "plex.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Plex",
+     "gethomepage.dev/siteMonitor": "http://plex.media.svc.cluster.local:32400",
+     "gethomepage.dev/weight": "1",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_PLEX_KEY}}",
+     "gethomepage.dev/widget.type": "plex"
+    },
+    "labels": {
+     "app": "plex"
+    },
+    "name": "plex"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`plex.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-plex",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "plex",
+        "port": 32400
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "plex"
+    },
+    "name": "plex-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`plex.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "plex",
+        "port": 32400
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Poster Overlay Generator",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/plex.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Posterizarr",
+     "gethomepage.dev/siteMonitor": "http://posterizarr.media.svc.cluster.local:8000",
+     "gethomepage.dev/weight": "53"
+    },
+    "labels": {
+     "app": "posterizarr",
+     "app.kubernetes.io/name": "posterizarr",
+     "app.kubernetes.io/part-of": "arr-stack"
+    },
+    "name": "posterizarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`posterizarr.talos00`) && PathPrefix(`/api`)",
+      "priority": 100,
+      "services": [
+       {
+        "name": "posterizarr",
+        "port": 8000
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`posterizarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "posterizarr",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "posterizarr"
+    },
+    "name": "posterizarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`posterizarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "posterizarr",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Rotating poster wall for the media libraries",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "posterr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Posterr",
+     "gethomepage.dev/weight": "60"
+    },
+    "labels": {
+     "app": "posterr"
+    },
+    "name": "posterr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`posterr.talos00`) && PathPrefix(`/api`)",
+      "priority": 100,
+      "services": [
+       {
+        "name": "posterr",
+        "port": 3000
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`posterr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "posterr",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "posterr"
+    },
+    "name": "posterr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`posterr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "posterr",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Indexer Manager",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "prowlarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Prowlarr",
+     "gethomepage.dev/siteMonitor": "http://prowlarr.media.svc.cluster.local:9696",
+     "gethomepage.dev/weight": "20",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_PROWLARR_KEY}}",
+     "gethomepage.dev/widget.type": "prowlarr"
+    },
+    "labels": {
+     "app": "prowlarr"
+    },
+    "name": "prowlarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`prowlarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "prowlarr",
+        "port": 9696
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`prowlarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-prowlarr",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "prowlarr",
+        "port": 9696
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "prowlarr"
+    },
+    "name": "prowlarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`prowlarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "prowlarr",
+        "port": 9696
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Media Sync",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "pulsarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Pulsarr",
+     "gethomepage.dev/siteMonitor": "http://pulsarr.media.svc.cluster.local:3003",
+     "gethomepage.dev/weight": "52"
+    },
+    "labels": {
+     "app": "pulsarr"
+    },
+    "name": "pulsarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`pulsarr.talos00`) && PathPrefix(`/api`)",
+      "priority": 100,
+      "services": [
+       {
+        "name": "pulsarr",
+        "port": 3003
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`pulsarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "pulsarr",
+        "port": 3003
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "pulsarr"
+    },
+    "name": "pulsarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`pulsarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "pulsarr",
+        "port": 3003
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Movie Management",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "radarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Radarr",
+     "gethomepage.dev/siteMonitor": "http://radarr.media.svc.cluster.local:7878",
+     "gethomepage.dev/weight": "11",
+     "gethomepage.dev/widget.enableQueue": "true",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_RADARR_KEY}}",
+     "gethomepage.dev/widget.type": "radarr"
+    },
+    "labels": {
+     "app": "radarr"
+    },
+    "name": "radarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`radarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "radarr",
+        "port": 7878
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`radarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-radarr",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "radarr",
+        "port": 7878
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "radarr"
+    },
+    "name": "radarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`radarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "radarr",
+        "port": 7878
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Book & Audiobook Management",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "readarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Readarr",
+     "gethomepage.dev/siteMonitor": "http://readarr.media.svc.cluster.local:8787",
+     "gethomepage.dev/weight": "12",
+     "gethomepage.dev/widget.enableQueue": "true",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_READARR_KEY}}",
+     "gethomepage.dev/widget.type": "readarr"
+    },
+    "labels": {
+     "app": "readarr"
+    },
+    "name": "readarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`readarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))",
+      "priority": 100,
+      "services": [
+       {
+        "name": "readarr",
+        "port": 8787
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`readarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "readarr",
+        "port": 8787
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "readarr"
+    },
+    "name": "readarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`readarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "readarr",
+        "port": 8787
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Usenet Downloader",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "sabnzbd.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "SABnzbd",
+     "gethomepage.dev/siteMonitor": "http://sabnzbd.media.svc.cluster.local:8080",
+     "gethomepage.dev/weight": "41",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_SABNZBD_KEY}}",
+     "gethomepage.dev/widget.type": "sabnzbd"
+    },
+    "labels": {
+     "app": "sabnzbd"
+    },
+    "name": "sabnzbd"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`sabnzbd.talos00`) && PathPrefix(`/api`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "sabnzbd",
+        "port": 8080
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`sabnzbd.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-sabnzbd",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "sabnzbd",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "sabnzbd"
+    },
+    "name": "sabnzbd-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`sabnzbd.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "sabnzbd",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "NVR / smart-home camera hub",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "scrypted.png",
+     "gethomepage.dev/name": "Scrypted",
+     "gethomepage.dev/siteMonitor": "http://scrypted.scratch.svc.cluster.local:11080"
+    },
+    "labels": {
+     "app": "scrypted"
+    },
+    "name": "scrypted"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`scrypted.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "scrypted",
+        "port": 11080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "scrypted"
+    },
+    "name": "scrypted-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`scrypted.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "scrypted",
+        "port": 11080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Media Requests",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "overseerr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Seerr",
+     "gethomepage.dev/siteMonitor": "http://seerr.media.svc.cluster.local:5055",
+     "gethomepage.dev/weight": "21",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_OVERSEERR_KEY}}",
+     "gethomepage.dev/widget.type": "overseerr"
+    },
+    "labels": {
+     "app": "seerr"
+    },
+    "name": "seerr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`seerr.talos00`) && PathPrefix(`/api`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "seerr",
+        "port": 5055
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`seerr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-overseerr",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "seerr",
+        "port": 5055
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "seerr"
+    },
+    "name": "seerr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`seerr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "seerr",
+        "port": 5055
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "TV Series Management",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "sonarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Sonarr",
+     "gethomepage.dev/siteMonitor": "http://sonarr.media.svc.cluster.local:8989",
+     "gethomepage.dev/weight": "10",
+     "gethomepage.dev/widget.enableQueue": "true",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_SONARR_KEY}}",
+     "gethomepage.dev/widget.type": "sonarr"
+    },
+    "labels": {
+     "app": "sonarr"
+    },
+    "name": "sonarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`sonarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "sonarr",
+        "port": 8989
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`sonarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-sonarr",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "sonarr",
+        "port": 8989
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "sonarr"
+    },
+    "name": "sonarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`sonarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "sonarr",
+        "port": 8989
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Homelab Control Plane",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "stackarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Stackarr",
+     "gethomepage.dev/siteMonitor": "http://stackarr.media.svc.cluster.local:7777",
+     "gethomepage.dev/weight": "5"
+    },
+    "labels": {
+     "app": "stackarr"
+    },
+    "name": "stackarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`stackarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "stackarr",
+        "port": 7777
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "stackarr"
+    },
+    "name": "stackarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`stackarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "stackarr",
+        "port": 7777
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "storyteller-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`storyteller.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "storyteller",
+        "port": 8001
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Plex Analytics",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "tautulli.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Tautulli",
+     "gethomepage.dev/siteMonitor": "http://tautulli.media.svc.cluster.local:8181",
+     "gethomepage.dev/weight": "30",
+     "gethomepage.dev/widget.key": "{{HOMEPAGE_VAR_TAUTULLI_KEY}}",
+     "gethomepage.dev/widget.type": "tautulli"
+    },
+    "labels": {
+     "app": "tautulli"
+    },
+    "name": "tautulli"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tautulli.talos00`) && PathPrefix(`/api`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "tautulli",
+        "port": 8181
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`tautulli.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-tautulli",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "tautulli",
+        "port": 8181
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "tautulli"
+    },
+    "name": "tautulli-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tautulli.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "tautulli",
+        "port": 8181
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Media Transcoding",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "tdarr.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Tdarr",
+     "gethomepage.dev/siteMonitor": "http://tdarr-server.tdarr.svc.cluster.local:8265",
+     "gethomepage.dev/weight": "50",
+     "gethomepage.dev/widget.type": "tdarr"
+    },
+    "labels": {
+     "app": "tdarr-server"
+    },
+    "name": "tdarr"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tdarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "tdarr-server",
+        "port": 8265
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "tdarr-server"
+    },
+    "name": "tdarr-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tdarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "tdarr-server",
+        "port": 8265
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Channel/playlist sync to media library",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Downloads",
+     "gethomepage.dev/icon": "tubesync.png",
+     "gethomepage.dev/name": "TubeSync",
+     "gethomepage.dev/siteMonitor": "http://tubesync.downloads.svc.cluster.local:4848"
+    },
+    "labels": {
+     "app": "tubesync"
+    },
+    "name": "tubesync"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tubesync.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "tubesync",
+        "port": 4848
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "tubesync"
+    },
+    "name": "tubesync-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`tubesync.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "tubesync",
+        "port": 4848
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+     "external-dns.alpha.kubernetes.io/hostname": "whoami.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "name": "whoami",
+    "namespace": "default"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`whoami.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "bot-wrangler",
+        "namespace": "traefik"
+       },
+       {
+        "name": "authentik",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "whoami",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "whoami-http",
+    "namespace": "default"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`whoami.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "whoami",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "whoami-http-noauth",
+    "namespace": "default"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`whoami.talos00`)",
+      "services": [
+       {
+        "name": "whoami",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "whoami-https-auth",
+    "namespace": "default"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`whoami-auth.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "whoami",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "whoami-https-noauth",
+    "namespace": "default"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`whoami-tls.talos00`)",
+      "services": [
+       {
+        "name": "whoami",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "noVNC console for the Windows gameserver VM",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Gaming",
+     "gethomepage.dev/icon": "mdi-microsoft-windows",
+     "gethomepage.dev/name": "Windows VNC",
+     "gethomepage.dev/siteMonitor": "http://windows-novnc.gaming.svc.cluster.local:8080"
+    },
+    "labels": {
+     "app": "windows-novnc"
+    },
+    "name": "windows-novnc"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`windows-vnc.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "windows-novnc",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "windows-novnc-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`windows-vnc.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "windows-novnc",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "File and screenshot host (LAN surface)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "zipline.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Zipline",
+     "gethomepage.dev/weight": "45"
+    },
+    "labels": {
+     "app": "zipline"
+    },
+    "name": "zipline-lan"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`zip.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zipline",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "zipline"
+    },
+    "name": "zipline-lan-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`zip.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zipline",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+     "external-dns.alpha.kubernetes.io/hostname": "zipline.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "labels": {
+     "app": "zipline"
+    },
+    "name": "zipline-public"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`zipline.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "security-headers",
+        "namespace": "traefik"
+       },
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       },
+       {
+        "name": "request-body-limit",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zipline",
+        "port": 3000
+       }
+      ]
+     }
+    ],
+    "tls": {}
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "zipline"
+    },
+    "name": "zipline-public-http"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`zipline.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zipline",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "utarr-dist"
+    },
+    "name": "utarr-dist",
+    "namespace": "downloads"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`utarr-dist.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "utarr-dist",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "utarr-dist"
+    },
+    "name": "utarr-dist-http",
+    "namespace": "downloads"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`utarr-dist.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "utarr-dist",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "YouTube channel/playlist sync to Plex",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Downloads",
+     "gethomepage.dev/icon": "youtube.png",
+     "gethomepage.dev/name": "Youtarr",
+     "gethomepage.dev/siteMonitor": "http://youtarr.downloads.svc.cluster.local:3011"
+    },
+    "labels": {
+     "app": "youtarr"
+    },
+    "name": "youtarr",
+    "namespace": "downloads"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`youtarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "youtarr",
+        "port": 3011
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "youtarr"
+    },
+    "name": "youtarr-api",
+    "namespace": "downloads"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`youtarr.talos00`) && Path(`/api/videos/download`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "youtarr-api-basicauth"
+       }
+      ],
+      "priority": 3000,
+      "services": [
+       {
+        "name": "youtarr",
+        "port": 3011
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "youtarr"
+    },
+    "name": "youtarr-http",
+    "namespace": "downloads"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`youtarr.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "youtarr",
+        "port": 3011
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Runtime security alerts (falcosidekick UI)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Security",
+     "gethomepage.dev/href": "https://falco.talos00",
+     "gethomepage.dev/icon": "falco.png",
+     "gethomepage.dev/name": "Falco"
+    },
+    "name": "falcosidekick-ui",
+    "namespace": "falco"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`falco.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "authentik",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "falco-falcosidekick-ui",
+        "port": 2802
+       }
+      ]
+     }
+    ],
+    "tls": {}
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "falcosidekick-ui-http",
+    "namespace": "falco"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`falco.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "falco-falcosidekick-ui",
+        "port": 2802
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Git forge + package registry (npm/PyPI/...)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Infrastructure",
+     "gethomepage.dev/href": "https://forge.knowledgedump.space",
+     "gethomepage.dev/name": "Forgejo"
+    },
+    "name": "forgejo",
+    "namespace": "forgejo"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`forge.talos00`) && Method(`GET`) && HeaderRegexp(`Accept`, `text/html`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "forge-canonical-redirect",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 200,
+      "services": [
+       {
+        "name": "forgejo",
+        "port": 3000
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`forge.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 100,
+      "services": [
+       {
+        "name": "forgejo",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "false",
+     "external-dns.alpha.kubernetes.io/hostname": "forge.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "name": "forgejo-public",
+    "namespace": "forgejo"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`forge.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "bot-wrangler",
+        "namespace": "traefik"
+       },
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-gitea-public",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "forgejo",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "forgejo-public-http",
+    "namespace": "forgejo"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`forge.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "forgejo",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "gpu-image-backend",
+     "app.kubernetes.io/part-of": "gpu-inference"
+    },
+    "name": "imagegen",
+    "namespace": "gpu-inference"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`imagegen.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only-strict",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "gpu-image-backend",
+        "namespace": "gpu-inference",
+        "port": 8012,
+        "serversTransport": "gpu-image-long-render"
+       }
+      ]
+     },
+     {
+      "kind": "Rule",
+      "match": "Host(`comfy.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only-strict",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "gpu-image-backend",
+        "namespace": "gpu-inference",
+        "port": 8188,
+        "serversTransport": "gpu-image-long-render"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Local LLM runtime",
+     "gethomepage.dev/group": "AI / LLM",
+     "gethomepage.dev/icon": "ollama",
+     "gethomepage.dev/name": "Ollama"
+    },
+    "labels": {
+     "app.kubernetes.io/name": "ollama-gateway",
+     "app.kubernetes.io/part-of": "gpu-inference"
+    },
+    "name": "ollama",
+    "namespace": "gpu-inference"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`ollama.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only-strict",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "gpu-backend",
+        "namespace": "gpu-inference",
+        "port": 8000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Self-hosted Discord replacement",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Apps",
+     "gethomepage.dev/icon": "discord.png",
+     "gethomepage.dev/name": "Haven",
+     "gethomepage.dev/siteMonitor": "http://haven.haven.svc.cluster.local:3000"
+    },
+    "name": "haven",
+    "namespace": "haven"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`haven.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "haven",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "haven-api",
+    "namespace": "haven"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`haven.${CLUSTER_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/socket.io`) || PathPrefix(`/uploads`))",
+      "priority": 100,
+      "services": [
+       {
+        "name": "haven",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "haven-http",
+    "namespace": "haven"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`haven.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "haven",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Kubernetes Dashboard",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes-dashboard.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Headlamp",
+     "gethomepage.dev/siteMonitor": "http://headlamp.infra-control.svc.cluster.local:80",
+     "gethomepage.dev/weight": "10"
+    },
+    "name": "headlamp",
+    "namespace": "infra-control"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`headlamp.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "headlamp",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "headlamp-http",
+    "namespace": "infra-control"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`headlamp.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "headlamp",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Cluster Visualizer",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Kube Ops View",
+     "gethomepage.dev/siteMonitor": "http://kube-ops-view.infra-control.svc.cluster.local:80",
+     "gethomepage.dev/weight": "12"
+    },
+    "name": "kube-ops-view",
+    "namespace": "infra-control"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`kube-ops-view.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "kube-ops-view",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "kube-ops-view-http",
+    "namespace": "infra-control"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`kube-ops-view.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "kube-ops-view",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "LLM/AI-crawler sinkhole maze",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Infrastructure",
+     "gethomepage.dev/name": "iocaine tarpit"
+    },
+    "name": "iocaine-internal",
+    "namespace": "iocaine"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`trap.talos00`)",
+      "services": [
+       {
+        "name": "iocaine",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "false",
+     "external-dns.alpha.kubernetes.io/hostname": "trap.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "name": "iocaine-public",
+    "namespace": "iocaine"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`trap.knowledgedump.space`)",
+      "services": [
+       {
+        "name": "iocaine",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "iocaine-public-http",
+    "namespace": "iocaine"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`trap.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "iocaine",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "The Lounge \u2014 IRC client + bouncer",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Apps",
+     "gethomepage.dev/icon": "irc.png",
+     "gethomepage.dev/name": "IRC",
+     "gethomepage.dev/siteMonitor": "http://thelounge.irc.svc.cluster.local:9000"
+    },
+    "name": "irc",
+    "namespace": "irc"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`irc.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "thelounge",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "irc-http",
+    "namespace": "irc"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`irc.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "thelounge",
+        "port": 9000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Network Observability",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Monitoring",
+     "gethomepage.dev/href": "https://hubble.talos00",
+     "gethomepage.dev/icon": "https://raw.githubusercontent.com/cilium/hubble/main/Documentation/images/hubble_logo.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Hubble",
+     "gethomepage.dev/siteMonitor": "http://hubble-ui.kube-system.svc.cluster.local",
+     "gethomepage.dev/weight": "20"
+    },
+    "labels": {
+     "app.kubernetes.io/name": "hubble-ui",
+     "app.kubernetes.io/part-of": "cilium"
+    },
+    "name": "hubble-ui",
+    "namespace": "kube-system"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`hubble.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "hubble-ui",
+        "port": 80
+       }
+      ]
+     }
+    ],
+    "tls": {}
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "hubble-ui-http",
+    "namespace": "kube-system"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`hubble.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "hubble-ui",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "description": "qBittorrent WebUI - VPN protected torrent client",
+     "gethomepage.dev/description": "Torrent Client (VPN Protected)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Media",
+     "gethomepage.dev/icon": "qbittorrent.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "qBittorrent",
+     "gethomepage.dev/siteMonitor": "http://qbittorrent.media.svc.cluster.local:8080",
+     "gethomepage.dev/weight": "40",
+     "gethomepage.dev/widget.password": "{{HOMEPAGE_VAR_QBITTORRENT_PASS}}",
+     "gethomepage.dev/widget.type": "qbittorrent",
+     "gethomepage.dev/widget.username": "{{HOMEPAGE_VAR_QBITTORRENT_USER}}"
+    },
+    "labels": {
+     "app": "qbittorrent",
+     "app.kubernetes.io/name": "qbittorrent",
+     "app.kubernetes.io/part-of": "arr-stack"
+    },
+    "name": "qbittorrent",
+    "namespace": "media"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`qbittorrent.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-qbittorrent",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "qbittorrent",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app": "qbittorrent"
+    },
+    "name": "qbittorrent-http",
+    "namespace": "media"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`qbittorrent.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "qbittorrent",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Tailnet control server",
+     "gethomepage.dev/group": "Infra",
+     "gethomepage.dev/icon": "headscale",
+     "gethomepage.dev/name": "Headscale"
+    },
+    "name": "headscale-internal",
+    "namespace": "mesh"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`headscale.talos00`)",
+      "services": [
+       {
+        "name": "headscale",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "false",
+     "external-dns.alpha.kubernetes.io/hostname": "headscale.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "name": "headscale-public",
+    "namespace": "mesh"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`headscale.knowledgedump.space`)",
+      "services": [
+       {
+        "name": "headscale",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "headscale-public-http",
+    "namespace": "mesh"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`headscale.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "headscale",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "S3 object-store API",
+     "gethomepage.dev/group": "Infra",
+     "gethomepage.dev/icon": "minio",
+     "gethomepage.dev/name": "MinIO (API)"
+    },
+    "name": "minio-api",
+    "namespace": "minio"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`s3.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "minio",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "S3 Object Storage",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Infrastructure",
+     "gethomepage.dev/icon": "minio.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "MinIO",
+     "gethomepage.dev/siteMonitor": "http://minio.minio.svc.cluster.local/minio/health/live"
+    },
+    "name": "minio-console",
+    "namespace": "minio"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`minio.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "minio-console",
+        "port": 9090
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "minio-console-http",
+    "namespace": "minio"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`minio.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "minio-console",
+        "port": 9090
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "OpenTelemetry Collector",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Monitoring",
+     "gethomepage.dev/href": "http://alloy.talos00",
+     "gethomepage.dev/icon": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/grafana.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Alloy",
+     "gethomepage.dev/siteMonitor": "http://alloy.monitoring.svc.cluster.local:12345/-/ready",
+     "gethomepage.dev/weight": "10"
+    },
+    "name": "alloy-otlp",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`otel.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "alloy",
+        "port": 4318
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "alloy"
+    },
+    "name": "catalyst-rum",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "PathPrefix(`/catalyst-rum/`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-rum-strip",
+        "namespace": "monitoring"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "alloy",
+        "port": 12347
+       }
+      ]
+     }
+    ],
+    "tls": {}
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "alloy"
+    },
+    "name": "catalyst-rum-http",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "PathPrefix(`/catalyst-rum/`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-rum-strip",
+        "namespace": "monitoring"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "alloy",
+        "port": 12347
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Dashboards & Visualization",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Monitoring",
+     "gethomepage.dev/icon": "grafana.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "Grafana",
+     "gethomepage.dev/siteMonitor": "http://grafana-service.monitoring.svc.cluster.local:3000",
+     "gethomepage.dev/weight": "1",
+     "gethomepage.dev/widget.password": "{{HOMEPAGE_VAR_GRAFANA_PASS}}",
+     "gethomepage.dev/widget.type": "grafana",
+     "gethomepage.dev/widget.username": "{{HOMEPAGE_VAR_GRAFANA_USER}}"
+    },
+    "labels": {
+     "app.kubernetes.io/name": "grafana"
+    },
+    "name": "grafana",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`grafana.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-nav-rum-grafana",
+        "namespace": "monitoring"
+       }
+      ],
+      "services": [
+       {
+        "name": "grafana-service",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "grafana"
+    },
+    "name": "grafana-http",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`grafana.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "grafana-service",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "ClickStack log analytics (SQL over logs)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Monitoring",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "HyperDX",
+     "gethomepage.dev/weight": "15"
+    },
+    "name": "hyperdx",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`hyperdx.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "clickstack-app",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "hyperdx-http",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`hyperdx.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "clickstack-app",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Log store (query API)",
+     "gethomepage.dev/group": "Monitoring",
+     "gethomepage.dev/icon": "loki",
+     "gethomepage.dev/name": "Loki"
+    },
+    "name": "loki-v2",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`loki.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "loki",
+        "port": 3100
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Metrics store (Prometheus API)",
+     "gethomepage.dev/group": "Monitoring",
+     "gethomepage.dev/icon": "grafana-mimir",
+     "gethomepage.dev/name": "Mimir"
+    },
+    "name": "mimir",
+    "namespace": "monitoring"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`mimir.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "mimir-gateway",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "Gym & body-weight tracker",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Apps",
+     "gethomepage.dev/icon": "mdi-weight-lifter",
+     "gethomepage.dev/name": "openGym",
+     "gethomepage.dev/siteMonitor": "http://opengym.opengym.svc.cluster.local"
+    },
+    "name": "opengym",
+    "namespace": "opengym"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`opengym.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       }
+      ],
+      "services": [
+       {
+        "name": "opengym",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "opengym-api",
+    "namespace": "opengym"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`opengym.${CLUSTER_DOMAIN}`) && PathPrefix(`/api`)",
+      "priority": 100,
+      "services": [
+       {
+        "name": "opengym",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "opengym-http",
+    "namespace": "opengym"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`opengym.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "opengym",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/description": "OCI registry (Nexus replacement)",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Infrastructure",
+     "gethomepage.dev/href": "https://registry.knowledgedump.space",
+     "gethomepage.dev/name": "Zot Registry"
+    },
+    "name": "zot",
+    "namespace": "registry"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`registry.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zot",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "external-dns.alpha.kubernetes.io/cloudflare-proxied": "false",
+     "external-dns.alpha.kubernetes.io/hostname": "registry.knowledgedump.space",
+     "external-dns.alpha.kubernetes.io/target": "knowledgedump.space"
+    },
+    "name": "zot-public",
+    "namespace": "registry"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`registry.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "rate-limit",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zot",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "zot-public-http",
+    "namespace": "registry"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`registry.knowledgedump.space`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zot",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "zot-talos00-tls",
+    "namespace": "registry"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`registry.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "zot",
+        "port": 5000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "gethomepage.dev/enabled": "false"
+    },
+    "name": "dbgate",
+    "namespace": "teak-talos-dev"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`dbgate.teak.talos00`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "dbgate",
+        "port": 3000
+       }
+      ]
+     }
+    ],
+    "tls": {
+     "secretName": "teak-wildcard-tls"
+    }
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "name": "dbgate-http",
+    "namespace": "teak-talos-dev"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`dbgate.teak.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "dbgate",
+        "port": 3000
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "themepark"
+    },
+    "name": "catalyst-assets",
+    "namespace": "themepark"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "PathPrefix(`/catalyst/`) && HostRegexp(`^[a-z0-9-]+\\.talos00$`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-compress",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-asset-cache",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "themepark",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "themepark"
+    },
+    "name": "catalyst-assets-forge-public",
+    "namespace": "themepark"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`forge.knowledgedump.space`) && PathRegexp(`^/catalyst/css/(base/gitea/(gitea-base|chroma|monaco_vs_dark)|defaults/(placeholders|transparent)|theme-options/catalyst)\\.css$`)",
+      "middlewares": [
+       {
+        "name": "catalyst-compress",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-asset-cache",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "themepark",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "themepark"
+    },
+    "name": "catalyst-assets-http",
+    "namespace": "themepark"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "PathPrefix(`/catalyst/`) && HostRegexp(`^[a-z0-9-]+\\.talos00$`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-compress",
+        "namespace": "traefik"
+       },
+       {
+        "name": "catalyst-asset-cache",
+        "namespace": "traefik"
+       }
+      ],
+      "priority": 10000,
+      "services": [
+       {
+        "name": "themepark",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "themepark"
+    },
+    "name": "themepark",
+    "namespace": "themepark"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`theme.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "themepark",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "themepark"
+    },
+    "name": "themepark-http",
+    "namespace": "themepark"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`theme.${CLUSTER_DOMAIN}`)",
+      "middlewares": [
+       {
+        "name": "lan-only",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "themepark",
+        "port": 80
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "secure-chrome"
+    },
+    "name": "secure-chrome-redirect",
+    "namespace": "vpn-gateway"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`securechrome.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "secure-chrome",
+        "port": 6901
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "labels": {
+     "app.kubernetes.io/name": "secure-webtop"
+    },
+    "name": "secure-webtop-redirect",
+    "namespace": "vpn-gateway"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`webtop.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "secure-webtop",
+        "port": 3001
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "description": "VPN-protected SearXNG behind Authentik forward-auth SSO (talos-apps)",
+     "gethomepage.dev/description": "Private metasearch, egressing through the VPN gateway",
+     "gethomepage.dev/enabled": "true",
+     "gethomepage.dev/group": "Home & Tools",
+     "gethomepage.dev/icon": "searxng.png",
+     "gethomepage.dev/instance": "main",
+     "gethomepage.dev/name": "SearXNG",
+     "gethomepage.dev/weight": "40"
+    },
+    "labels": {
+     "app.kubernetes.io/component": "ingress",
+     "app.kubernetes.io/name": "securexng"
+    },
+    "name": "securexng",
+    "namespace": "vpn-gateway"
+   },
+   "spec": {
+    "entryPoints": [
+     "websecure"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`securexng.talos00`)",
+      "middlewares": [
+       {
+        "name": "authentik-lan",
+        "namespace": "authentik"
+       },
+       {
+        "name": "catalyst-nav",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "securexng",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "traefik.io/v1alpha1",
+   "kind": "IngressRoute",
+   "metadata": {
+    "annotations": {
+     "description": "VPN-protected SearXNG - HTTP\u2192HTTPS redirect"
+    },
+    "labels": {
+     "app.kubernetes.io/component": "ingress",
+     "app.kubernetes.io/name": "securexng"
+    },
+    "name": "securexng-http",
+    "namespace": "vpn-gateway"
+   },
+   "spec": {
+    "entryPoints": [
+     "web"
+    ],
+    "routes": [
+     {
+      "kind": "Rule",
+      "match": "Host(`securexng.talos00`)",
+      "middlewares": [
+       {
+        "name": "redirect-https",
+        "namespace": "traefik"
+       }
+      ],
+      "services": [
+       {
+        "name": "securexng",
+        "port": 8080
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "kind": "List"
+}

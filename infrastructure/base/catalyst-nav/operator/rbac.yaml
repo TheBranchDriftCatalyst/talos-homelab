@@ -1,0 +1,112 @@
+---
+# ServiceAccount + RBAC for the nav operator.
+#
+# Every rule below says what breaks without it. None of them is a blanket grant: the operator
+# reads four kinds cluster-wide and writes exactly two things (status on its own CRs, and one
+# ConfigMap in its own namespace), and the grants stop there.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalyst-nav-operator
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/part-of: catalyst
+# Stated explicitly with the reason, per this repo's convention for controller SAs.
+automountServiceAccountToken: true # the controller watches four kinds via the k8s API
+---
+# Cluster-wide READS of four kinds, and no cluster-wide writes at all.
+#
+# Deliberately NOT granted:
+#   - no create/update/delete on navgroups or naventries. The operator reports on the taxonomy;
+#     it does not author it. The 8 NavGroups are a reviewed file in git.
+#   - no `*/finalizers`. Nothing here needs one: the published ConfigMap is owned by this
+#     component and garbage-collected with it, and a deleted NavGroup needs no cleanup beyond
+#     the next reconcile noticing.
+#   - no `events`. The operator's diagnostics go to status.conditions, which is queryable and
+#     does not expire after an hour — the whole point of this phase.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: catalyst-nav-operator
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+rules:
+  # The entry source. get/list/watch and nothing else — the operator DERIVES the nav from
+  # these and must never be able to edit an app's routing. (The sidecar it replaces holds the
+  # same read-only grant as ClusterRole themepark-nav-reader, minus `watch`, because a poll
+  # loop does not need it.)
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes]
+    verbs: [get, list, watch]
+  # The Crossplane claim most new apps are onboarded through. Watched for the EAGER signal:
+  # spec.homepage lands on the claim before the composed IngressRoute's annotations are
+  # complete (the composition patches, then Kyverno derives), so watching only routes means
+  # reconciling a half-annotated object. See internal/controller/collect.go.
+  - apiGroups: [net.catalyst.io]
+    resources: [catalystwebsecureingresses]
+    verbs: [get, list, watch]
+  # The taxonomy and the override entries.
+  - apiGroups: [nav.catalyst.io]
+    resources: [navgroups, naventries]
+    verbs: [get, list, watch]
+  # Status is the whole feedback channel this phase adds — a bad annotation becomes a
+  # condition instead of a line in a sidecar log nobody reads. Without this the operator
+  # reconciles correctly and reports nothing, which is the state phase 2 exists to leave.
+  - apiGroups: [nav.catalyst.io]
+    resources: [navgroups/status, naventries/status]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: catalyst-nav-operator
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: catalyst-nav-operator
+subjects:
+  - kind: ServiceAccount
+    name: catalyst-nav-operator
+    namespace: catalyst-nav
+---
+# Namespaced write, because the ONE thing this operator creates lives in its own namespace.
+# A ClusterRole granting ConfigMap write would let a nav bug overwrite any ConfigMap in the
+# cluster — including the 32 Grafana dashboards and every Flux-managed config.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: catalyst-nav-operator
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch]
+    # resourceNames is NOT set: `create` is meaningless with resourceNames (the name does not
+    # exist yet to be matched), so restricting it would silently break first-run publication.
+    # The namespace is the boundary here.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: catalyst-nav-operator
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: catalyst-nav-operator
+subjects:
+  - kind: ServiceAccount
+    name: catalyst-nav-operator
+    namespace: catalyst-nav

@@ -1,0 +1,34 @@
+---
+# A dedicated namespace, NOT themepark.
+#
+# The tempting choice is `themepark`: it already holds the nav-discovery sidecar this operator
+# replaces, already has an SA with get/list on ingressroutes, and already carries the
+# default-deny + DNS + `toEntities: kube-apiserver` CiliumNetworkPolicy set. Reusing it would
+# save four files.
+#
+# It would also couple the replacement to the thing being replaced, for the whole length of a
+# six-phase strangler-fig migration. The themepark Deployment restarts whenever the theme, the
+# middleware set or the served tree changes; an operator in that namespace sharing that SA and
+# those policies would acquire the theme server's blast radius while the two are meant to run
+# side by side and be compared. Phase 6 deletes the sidecar — at which point a shared namespace
+# would mean editing the operator's RBAC and network policy in the same commit that removes the
+# sidecar's, which is exactly the kind of coupling that makes a migration step unreviewable.
+#
+# So: the unifi-port-forward pattern — a standalone CR-watching controller owning its own
+# namespace, SA, RBAC and policies.
+#
+# PSS: enforce baseline / audit+warn restricted, matching every other namespace here. This
+# operator's pod actually satisfies `restricted` (distroless, non-root, no capabilities,
+# read-only root) — it is just not ENFORCED at that level, because raising enforcement for one
+# namespace would diverge from the cluster-wide posture for no gain the pod spec does not
+# already deliver.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/part-of: catalyst
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
