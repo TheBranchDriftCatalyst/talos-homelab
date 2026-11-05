@@ -1,0 +1,169 @@
+---
+# NavEntry — override/inject ONLY. This is deliberately NOT the common path.
+#
+# The common path, both today and after the strangler-fig migration completes, is derivation:
+# an app gets a gethomepage.dev-annotated IngressRoute and a nav entry appears with no NavEntry
+# object ever created. Most apps will never have a NavEntry — see build_nav.py's own docstring
+# ("Nothing is hardcoded, so the nav tracks the cluster automatically") for why derivation is the
+# house rule, and treat any urge to make NavEntry the normal way of adding an app's nav listing
+# as a sign the derivation path is missing something, not as this object doing its job.
+#
+# What a NavEntry is actually for — the cases where there is no IngressRoute to derive FROM:
+#   - a destination with no IngressRoute of its own at all: an external link, a bookmark, an
+#     AWS-hosted outpost that lives outside this cluster entirely.
+#   - overriding one field of an otherwise-derived entry (a later phase's reconciler is expected
+#     to let a NavEntry win over the derived value for the same destination — not implemented
+#     yet; this CRD only defines the shape).
+#
+# Namespaced, unlike NavGroup: a NavEntry belongs to whichever app's manifests it rides along
+# with (same namespace as that app's Deployment/IngressRoute), so it moves and deletes with that
+# app instead of living in some separate catalog namespace nobody remembers to clean up.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: naventries.nav.catalyst.io
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/part-of: catalyst
+spec:
+  group: nav.catalyst.io
+  scope: Namespaced
+  names:
+    kind: NavEntry
+    listKind: NavEntryList
+    plural: naventries
+    singular: naventry
+    shortNames:
+      - ne
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Title
+          type: string
+          jsonPath: .spec.title
+        - name: Group
+          type: string
+          jsonPath: .spec.navGroupRef
+        - name: Order
+          type: integer
+          jsonPath: .spec.order
+        - name: Themed
+          type: boolean
+          jsonPath: .spec.themed
+        - name: Lifecycle
+          type: string
+          jsonPath: .spec.lifecycle
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            NavEntry is one explicit navbar listing: an override of a derived entry, or an
+            entry for a destination that has no IngressRoute of its own to derive from. See
+            the file header before reaching for this on a normal app — normal apps derive.
+          properties:
+            spec:
+              type: object
+              required: [title, href, navGroupRef]
+              x-kubernetes-validations:
+                - rule: "self.order % 10 == 0"
+                  message: >-
+                    order must be a multiple of 10 — see NavGroup's spec.order for the
+                    documented scale. NavEntry reuses it so an override sorts predictably
+                    against the group's other members once a later phase wires entries and
+                    overrides into the same ordered list.
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 60
+                  pattern: '^\S(.*\S)?$'
+                  description: Display name shown in the navbar.
+                href:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  # Either a real URL (an external link, a bookmark, an AWS-hosted outpost —
+                  # the actual reason this object exists) or an absolute in-cluster path. What
+                  # it must NOT be is a bare hostname or relative path: those are exactly the
+                  # ambiguous strings that forced build_nav.py to parse Host(`...`) out of a
+                  # Traefik match rule in the first place. A NavEntry is written by hand, so
+                  # there's no excuse for leaving that ambiguity in.
+                  pattern: '^(https?://\S+|/\S*)$'
+                  description: >-
+                    Absolute URL (http:// or https://) for anything outside this cluster, or
+                    an absolute path beginning with "/" for an in-cluster destination.
+                navGroupRef:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  description: >-
+                    metadata.name of the target NavGroup (cluster-scoped, so no namespace
+                    here). NOT validated against actually-existing NavGroup objects — an
+                    OpenAPI schema has no way to look at other objects, and wiring that up
+                    would need an admission webhook, which is out of scope for this phase. A
+                    typo here fails the same way a typo'd gethomepage.dev/group fails today:
+                    the entry silently has nowhere to render. Closing that gap is explicitly
+                    deferred, not solved, by this CRD — do not read the field's presence as a
+                    guarantee the reference resolves.
+                order:
+                  type: integer
+                  minimum: 10
+                  maximum: 990
+                  default: 500
+                  description: >-
+                    Position within the target group, same multiples-of-10 scale as
+                    NavGroup.spec.order (enforced above). Defaults to 500 — dead center of
+                    the 10-990 range — so an override with no stated opinion about ordering
+                    sorts into the middle of its group instead of accidentally claiming
+                    either end.
+                themed:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Mirrors the `themed` flag build_nav.py derives today (true iff the route
+                    carries a catalyst-* theming middleware): whether the destination gets
+                    the full Catalyst visual treatment, rendered undimmed, versus an
+                    unthemed destination that's dimmed so it's obvious you're leaving the
+                    styled set. A hand-written NavEntry has no middleware to derive this
+                    from, so it must be stated — default false (dimmed) because the
+                    destinations this object exists for (external links, bookmarks,
+                    AWS-hosted outposts) are, definitionally, not running the theme.
+                lifecycle:
+                  type: string
+                  enum: [stable, experimental]
+                  default: stable
+                  description: >-
+                    Same meaning as NavGroup.spec.lifecycle — see there. A malformed value
+                    is rejected at admission by this enum, not silently dropped.
+                visibility:
+                  type: object
+                  description: >-
+                    Omit entirely, or leave authentikGroups empty, for an entry visible to
+                    everyone. Same shape as NavGroup.spec.visibility — see there for why this
+                    schema can't verify the group names against Authentik itself.
+                  properties:
+                    authentikGroups:
+                      type: array
+                      maxItems: 20
+                      # See NavGroup.spec.visibility.authentikGroups — plain uniqueItems is
+                      # rejected by the apiserver for CRDs; x-kubernetes-list-type: set is
+                      # the supported equivalent.
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+            status:
+              type: object
+              description: >-
+                Reserved for phase 2+ (e.g. whether this entry's navGroupRef currently
+                resolves). Empty for now — no controller exists yet to write to it.
+              properties: {}
+              x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}

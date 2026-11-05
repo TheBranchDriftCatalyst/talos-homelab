@@ -1,0 +1,26 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Phase 1 of a strangler-fig migration for the Catalyst navbar taxonomy (API group
+# nav.catalyst.io/v1alpha1). This component is DELIBERATELY NOT referenced by any Flux
+# Kustomization under clusters/catalyst-cluster/ yet — adding that wiring is what would
+# actually deploy it, and this phase is schema-and-taxonomy-only.
+#
+# infrastructure/base/themepark/server/nav/ (discover.sh + build_nav.py) is the live nav
+# pipeline and is untouched by this directory. It keeps deriving catalyst-nav.json from
+# gethomepage.dev/* annotations exactly as it does today. A later phase teaches that
+# pipeline to resolve against NavGroup/NavEntry objects instead of taking annotation
+# strings verbatim; until that phase lands, these CRDs and taxonomy objects have zero
+# effect on what ships to the browser even once applied.
+#
+# Resource order matters only in the sense that the CRDs must exist before the taxonomy's
+# NavGroup instances can be created — Kustomize/kubectl apply -k does not guarantee
+# ordering across separate files within one apply, so when this DOES get wired into a
+# Flux Kustomization, expect the first reconcile to retry the taxonomy.yaml objects once
+# while the CRDs establish. Listed in dependency order here for a human reading the file,
+# not because that's what makes it work.
+resources:
+  - navgroup-crd.yaml
+  - naventry-crd.yaml
+  - taxonomy.yaml

@@ -1,0 +1,134 @@
+---
+# The 8-group taxonomy. One NavGroup object per group — nothing else may claim to BE one of
+# these groups; an app that wants to join "Library" references navgroups/library by name, not
+# by retyping the string "Library" on its own IngressRoute (that retyping is exactly how this
+# cluster ended up with both "Monitoring" and "Observability" today).
+#
+# This replaces today's 12 free-text groups:
+#   Monitoring + Observability + Analytics  -> Observability (one group, one name, finally)
+#   three separate book-app groups           -> Library
+#   the Databases singleton                  -> absorbed into Infrastructure
+#   a 15-entry Media bucket                  -> split into Media / Media Automation / Downloads
+#   Infra, Security                          -> folded into Infrastructure
+#   Home & Tools, Comms & Apps                -> unchanged
+#
+# Phase 1 only creates these 8 objects. No app's IngressRoute annotation changes yet, and
+# nothing reads navGroupRef/these names yet — see the CRD files' headers. This file is the
+# taxonomy, reviewed once, instead of 40-odd independently-typed strings.
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: media
+spec:
+  title: Media
+  order: 10
+  icon: plex.png
+  lifecycle: stable
+  # Plex, Jellyfin, Seerr, Tautulli, Posterr — what you actually watch/browse. Split out of
+  # the old 15-entry Media bucket from the automation/acquisition tooling nobody but the
+  # operator needs, below.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: media-automation
+spec:
+  title: Media Automation
+  order: 20
+  icon: sonarr.png
+  lifecycle: stable
+  # Sonarr, Radarr, Prowlarr, Stackarr, Tdarr, Maintainerr, Pulsarr, Posterizarr — the
+  # *arr acquisition/maintenance stack. Split from Media because these are operator tools,
+  # not viewing surfaces; a guest who wants to watch something has zero use for Prowlarr.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: downloads
+spec:
+  title: Downloads
+  order: 30
+  icon: qbittorrent.png
+  lifecycle: stable
+  # qBittorrent, SABnzbd, MeTube, TubeSync, Youtarr — the transport layer underneath Media
+  # Automation. Kept distinct from it because these are the pieces most likely to need
+  # direct operator attention (stalled downloads, auth, disk pressure) independent of the
+  # *arr apps that queue work for them.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: library
+spec:
+  title: Library
+  order: 40
+  icon: audiobookshelf.png
+  lifecycle: stable
+  # Folds THREE separate book-app groups from the old taxonomy into one: audiobooks
+  # (Audiobookshelf, Libation), ebooks/comics (Kavita, Komga, BookOrbit), and reading
+  # trackers (Booksonic, Storyteller) were each their own dropdown before. They are all
+  # "things you read or listen to from a personal library" and belong together.
+  #
+  # Chaptarr, Bindery, Librarr, Livrarr and Mylar3 land here too but are NOT stable — see
+  # each app's own NavEntry once those exist. They're early enough that this group's
+  # own lifecycle stays `stable` (Library itself isn't going anywhere); it's the five
+  # individual apps that are experimental, which is a per-entry fact, not a per-group one.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: infrastructure
+spec:
+  title: Infrastructure
+  order: 50
+  icon: kubernetes.png
+  lifecycle: stable
+  visibility:
+    # KubeView, System Graph, ArgoCD, CrowdSec, MinIO, DbGate are cluster-admin surfaces,
+    # not apps a household member has any reason to open. Gated to the same two Authentik
+    # groups used for the equivalent gate on system-graph's own outpost (talos-admin /
+    # cluster-admin) rather than inventing a third name for the same concept.
+    authentikGroups: [talos-admin, cluster-admin]
+  # Absorbs the old Databases singleton (DbGate is the one databases-facing UI) and folds
+  # in what used to be a separate "Infra" group — there was never a real distinction
+  # between the two once Security's cluster-facing tools (CrowdSec) are counted here too.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: observability
+spec:
+  title: Observability
+  order: 60
+  icon: grafana.png
+  lifecycle: stable
+  # THE group this migration exists to fix: Grafana, HyperDX, Hubble, logAIrr, Plausible
+  # were split across "Monitoring", "Observability" and "Analytics" in the old taxonomy —
+  # three strings for one concept, accumulated because the annotation is free text and
+  # nobody doing one app's deployment at a time had the full list in front of them to
+  # notice the drift. One NavGroup object now; see this directory's top-level comment.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: home-and-tools
+spec:
+  title: Home & Tools
+  order: 70
+  icon: home-assistant.png
+  lifecycle: stable
+  # Unchanged from today's taxonomy, by design — nothing about this group was part of the
+  # typo-fork or bucket-splitting problem this migration is solving, so it's carried over
+  # as-is rather than reshuffled for its own sake.
+---
+apiVersion: nav.catalyst.io/v1alpha1
+kind: NavGroup
+metadata:
+  name: comms-and-apps
+spec:
+  title: Comms & Apps
+  order: 80
+  icon: irc.png
+  lifecycle: stable
+  # Catalyst UI, F-Chat Bouncer, Haven, IRC. Lowest-traffic group of the eight, hence the
+  # highest order value — last in the bar, not first.
