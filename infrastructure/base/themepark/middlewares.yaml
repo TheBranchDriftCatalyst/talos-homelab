@@ -197,8 +197,22 @@ spec:
     rewriteBody:
       lastModified: true
       rewrites:
+        # FIRST APP CUT OVER to the per-identity manifest (phase 4, 2026-11-06).
+        # `data-nav-manifest="identity"` IS the whole cutover: the client reads the
+        # attribute off its own tag and picks the operator's authenticated endpoint
+        # instead of the public static file. Absent or unrecognised means static, so
+        # every other injector in this file is untouched and rolling back is deleting
+        # that one attribute. It is a KEYWORD, never a URL -- both URLs are constants
+        # in 60-nav.js, because whatever can write this tag could otherwise repoint
+        # every link in the bar.
+        #
+        # dbgate went first deliberately: admin-only, low traffic, its own injector,
+        # already on authentik-lan + websecure. The identity fetch is same-origin with
+        # credentials, and these providers are forward_single with no cookie_domain,
+        # so the session cookie is per-host -- an app NOT behind authentik-lan gets no
+        # identity and silently renders the anonymous subset rather than failing loudly.
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-dbgate.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
