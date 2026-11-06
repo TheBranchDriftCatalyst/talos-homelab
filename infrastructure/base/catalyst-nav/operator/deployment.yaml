@@ -62,6 +62,12 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532 # nonroot uid in the distroless base
         runAsGroup: 65532
+        # fsGroup, or the webhook cert is unreadable. A Secret volume's files are owned by
+        # root:root, and defaultMode below is 0440 -- so uid 65532 got "permission denied"
+        # opening its OWN serving cert, and the manager exited before any controller started.
+        # Observed 2026-11-06. fsGroup makes the kubelet chgrp the volume to 65532, which is
+        # what makes a group-readable mode mean anything here.
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       # Soft anti-affinity away from talos03, the memory-constrained node — the house pattern
@@ -163,4 +169,7 @@ spec:
             # report Ready-never and block NavEntry writes with no indication why, so failing
             # to mount is the better signal.
             secretName: catalyst-nav-webhook-cert
-            defaultMode: 0400
+            # 0440, not 0400: the files are root-owned, so owner-only read locked out the
+            # 65532 runtime user entirely. Group read + fsGroup above is what grants access
+            # without making the key world-readable.
+            defaultMode: 0440
