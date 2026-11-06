@@ -35,26 +35,18 @@ spec:
             - port: "53"
               protocol: TCP
 ---
-# Egress to the Kubernetes API for the nav-discovery sidecar, which lists
-# IngressRoutes to build the nav manifest. Without this the default-deny above
-# blackholes it and kubectl hangs until timeout — the pod stays 2/2 Running and
-# the only symptom is a nav manifest that never appears.
+# THE allow-apiserver-egress POLICY IS GONE, and that is a privilege reduction, not an
+# oversight.
 #
-# `toEntities: kube-apiserver` is the Cilium-native way to express this: it
-# resolves to whatever the real API server endpoints are, so it keeps working
-# across control-plane IP changes, unlike a hardcoded CIDR.
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
-metadata:
-  name: allow-apiserver-egress
-  namespace: themepark
-spec:
-  endpointSelector:
-    matchLabels:
-      app: themepark
-  egress:
-    - toEntities:
-        - kube-apiserver
+# It existed for one reason: the nav-discovery sidecar listed IngressRoutes cluster-wide to
+# build the nav manifest, and the default-deny above would otherwise blackhole the call. That
+# sidecar is deleted — the catalyst-nav operator is the sole producer of the nav manifest now —
+# so nothing in this namespace talks to the apiserver any more. The theme server is a static
+# file server again, exactly as the default-deny's comment claims: "it needs to talk to
+# nothing and nothing but Traefik needs to talk to it."
+#
+# If something here ever needs the apiserver again, re-add it deliberately. Do not restore it
+# to fix a nav problem: the nav manifest is not produced in this pod.
 
 ---
 # Ingress on :80 from Traefik only.

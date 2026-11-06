@@ -40,7 +40,11 @@ spec:
         app.kubernetes.io/name: themepark
         app: themepark
     spec:
-      serviceAccountName: themepark-nav
+      # NO serviceAccountName, deliberately — so this pod runs as the namespace `default` SA,
+      # which is bound to nothing. The `themepark-nav` SA that used to be named here existed
+      # ONLY to give the deleted nav-discovery sidecar cluster-wide read on IngressRoutes;
+      # with the sidecar gone, nothing in this pod talks to the apiserver, and rbac.yaml is
+      # deleted rather than left as an unused grant. See the note where the sidecar was.
       containers:
         - name: themepark
           # Pinned by digest, not :latest. There are no semver tags on this repo,
@@ -153,52 +157,31 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30
-        # Nav discovery. Writes catalyst-nav.json into the SAME emptyDir nginx
-        # serves from, so the manifest is published at
-        # /catalyst/resources/catalyst-nav.json with no extra nginx config and
-        # no pod restart when apps come or go.
-        #
-        # The nav is DERIVED, never hardcoded: it is built from the
-        # gethomepage.dev/* annotations already on the cluster's IngressRoutes.
-        # Theme a new app and it joins the nav on the next refresh.
-        - name: nav-discovery
-          image: alpine/k8s:1.34.9
-          imagePullPolicy: IfNotPresent
-          command: ['/bin/sh', '/nav/discover.sh']
-          env:
-            - name: NAV_REFRESH_SECONDS
-              value: '300'
-            # 'themed' (default) lists only apps carrying the Catalyst theme, so
-            # every destination looks like the one you came from. 'all' would
-            # advertise every gethomepage.dev-enabled route.
-            - name: NAV_SCOPE
-              value: themed
-          securityContext:
-            # Must match PUID/PGID above. The s6 init chowns /config to abc
-            # (1000:1000), and this container drops ALL capabilities — which
-            # removes CAP_DAC_OVERRIDE, the thing that normally lets root ignore
-            # file permissions. So running as root here gets "Permission denied"
-            # writing the manifest. Owning the uid is the fix; re-adding
-            # DAC_OVERRIDE would also work and is strictly worse.
-            runAsUser: 1000
-            runAsGroup: 1000
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            capabilities:
-              drop: ['ALL']
-          volumeMounts:
-            - name: nav-discovery
-              mountPath: /nav
-              readOnly: true
-            - name: config
-              mountPath: /config
-          resources:
-            requests:
-              cpu: 5m
-              memory: 32Mi
-            limits:
-              cpu: 100m
-              memory: 128Mi
+      # THE nav-discovery SIDECAR IS GONE, and this pod no longer produces the nav
+      # manifest at all.
+      #
+      # It used to run `discover.sh` -> `build_nav.py` on a 300-second loop, listing every
+      # IngressRoute in the cluster and writing catalyst-nav.json into the emptyDir nginx
+      # serves from. That was a SECOND implementation of a derivation the catalyst-nav
+      # operator already performs — one in Python here, one in Go there — kept in step only
+      # by a byte-for-byte parity task that no CI in this repo runs.
+      #
+      # /catalyst/resources/catalyst-nav.json is now served by the operator, at the SAME
+      # path, through a higher-priority Traefik route:
+      #   infrastructure/base/catalyst-nav/operator/public-manifest-route.yaml
+      # Nothing on the client side changed — every catalyst-inject-* middleware still
+      # injects the same <script> pointing at the same URL.
+      #
+      # WENT WITH IT: the themepark-nav-discovery ConfigMap, the themepark-nav
+      # ServiceAccount and its cluster-wide IngressRoute read RBAC (so this pod no longer
+      # talks to the apiserver, and its allow-apiserver-egress CiliumNetworkPolicy is
+      # deleted too), and the NAV_REFRESH_SECONDS / NAV_SCOPE env. NAV_SCOPE still exists,
+      # on the operator's Deployment, which is now its only reader.
+      #
+      # WHAT STAYED, and must: the `config` emptyDir below (the image's s6 init copies the
+      # css tree into it and runs themes.py, so /config must be writable), and the
+      # catalyst-nav.js mount — that is the nav CLIENT, still served from here and still
+      # the thing every themed app loads.
       volumes:
         - name: catalyst-theme
           configMap:
@@ -212,12 +195,13 @@ spec:
         - name: catalyst-nav
           configMap:
             name: themepark-catalyst-nav
-        - name: nav-discovery
-          configMap:
-            name: themepark-nav-discovery
-            defaultMode: 0755
-        # Shared between nginx and the discovery sidecar: nginx serves from it,
-        # the sidecar writes the nav manifest into it.
+        # nginx's writable document root. The s6 init copies the image's whole css tree in
+        # here and runs themes.py against it, so /config MUST be writable; the contents are
+        # fully regenerated on every boot, which is why this is an emptyDir and not a PVC.
+        #
+        # NO LONGER SHARED WITH ANYTHING. It used to be the handoff between nginx and the
+        # nav-discovery sidecar, which wrote catalyst-nav.json into it. With that sidecar
+        # deleted this volume has exactly one user again.
         - name: config
           emptyDir: {}
 ---

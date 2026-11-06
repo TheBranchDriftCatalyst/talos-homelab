@@ -1,0 +1,160 @@
+---
+# THE ROUTE THAT TAKES /catalyst/resources/catalyst-nav.json OFF THE THEME SERVER.
+#
+# One path moves from one backend to another. Everything else under /catalyst/ — the CSS, the
+# nav script, the fonts, themes.json, the whole 108MB theme.park tree — stays exactly where it
+# is, served by the same nginx through the same two routes in
+# infrastructure/base/themepark/asset-route.yaml. Only the manifest is intercepted, because
+# only the manifest had two producers.
+#
+# ── PRIORITY 10001, AND IT MUST BE HIGHER THAN 10000 ─────────────────────────────────────────
+#
+# This is the single most breakable thing in this file, so it is first.
+#
+# asset-route.yaml matches `PathPrefix(`/catalyst/`) && HostRegexp(...)` at priority 10000, and
+# that prefix DOES match this path — unlike the per-identity endpoint, which was deliberately
+# put at /catalyst-nav/... precisely so it could never collide. Here a collision is
+# unavoidable: the whole point is to serve a path that lives inside the theme server's prefix.
+# So the two rules genuinely overlap and the winner is decided by priority alone.
+#
+# Traefik sorts equal priorities with NO SECONDARY KEY. At 10000 on both, the winner would be
+# arbitrary and would be RE-DECIDED ON EVERY CONFIG RELOAD — so the manifest would sometimes
+# come from the operator and sometimes 404 from an nginx that no longer has the file, with no
+# change to either manifest in between. 10001 removes the question.
+#
+# Do NOT "simplify" this by lowering it to match its neighbour, and do NOT rely on the exact
+# `Path()` matcher being more specific than `PathPrefix()`: Traefik's priority is a number,
+# and specificity only breaks ties when the number is unset.
+#
+# `Path()`, not `PathPrefix()`, for the opposite reason to the per-identity route: that route
+# owns a whole prefix and lets its handler decide what is valid within it, whereas this route
+# is a surgical interception of ONE path out of someone else's prefix. A prefix match here
+# would swallow /catalyst/resources/ entirely and 404 catalyst-nav.js, blanking the bar on all
+# 58 themed hosts.
+#
+# ── BOTH ENTRYPOINTS, AND THAT ASYMMETRY WITH THE IDENTITY ROUTE IS DELIBERATE ───────────────
+#
+# manifest-route.yaml is websecure-ONLY, and its header explains why at length: an Authentik
+# session cookie is Secure, a browser will not send it over plain HTTP, so a `web` twin there
+# would answer 200 with the ANONYMOUS subset to a logged-in user and look like it was working.
+#
+# NONE OF THAT APPLIES HERE, because this endpoint reads no cookie and has no identity. What
+# applies instead is the reason asset-route.yaml has a `web` twin: PLEX AND JELLYFIN ARE SERVED
+# OVER PLAIN HTTP. They are themed, they are in the nav, and they fetch this manifest as a
+# same-origin subresource from an http page. Ship only the websecure route and those apps —
+# and every other HTTP-only themed host — lose their nav bar, while every https app keeps
+# working, which is the kind of partial breakage that gets attributed to the app rather than to
+# this file.
+#
+# TWO SEPARATE IngressRoute OBJECTS, never one listing both entrypoints. Kyverno
+# `ingressroute-no-combined-entrypoints` denies that, and the reason it exists is that Kyverno
+# `ingressroute-tls-default` injects `tls: {}`, which makes a combined router TLS-only and
+# silently 404s the HTTP half. No `tls:` stanza in either object for the same reason: the
+# policy supplies it.
+#
+# The `web` route must NOT carry redirect-https, for the same reason asset-route.yaml's twin
+# does not: a 302 on a subresource fetch is not followed usefully, and forcing https would mean
+# the manifest depends on the client trusting the homelab CA — which hard-fails with no
+# interstitial for a subresource.
+#
+# ── MIDDLEWARES: lan-only + compress + asset-cache, MATCHING THE ASSET ROUTE EXACTLY ─────────
+#
+# This list is a deliberate copy of asset-route.yaml's, because this route is taking over one
+# of its paths and the security boundary must not change in the handover.
+#
+#   lan-only      THE BOUNDARY, and it is doing real work. This manifest enumerates every
+#                 internal *.talos00 hostname. On 2026-09-26 it was CONFIRMED readable from
+#                 the public internet, and HostRegexp alone did not close it — Traefik routes
+#                 on the client-supplied Host header and :443 on the WAN IP is
+#                 internet-reachable, so `curl -k -H 'Host: sonarr.talos00' https://<wan-ip>/...`
+#                 returned the full manifest. The source address is the one thing the client
+#                 cannot choose, which is why BOTH controls are here and why neither is
+#                 redundant. Read asset-route.yaml's writeup before touching either.
+#
+#                 WRITTEN LITERALLY, not inherited. Kyverno's ingressroute-lan-only-talos00
+#                 policy prepends lan-only automatically but deliberately SKIPS any match
+#                 containing HostRegexp. A HostRegexp route gets nothing from that policy, and
+#                 the loss would not show up as Flux drift either.
+#
+#   catalyst-compress / catalyst-asset-cache
+#                 Carried so the handover is byte-and-header neutral: the file was served
+#                 behind both, the manifest is ~5KB of highly compressible JSON fetched on
+#                 every themed pageview, and asset-cache's
+#                 `public, max-age=300, stale-while-revalidate=3600` is what kept that off the
+#                 origin. 300s also happens to match the sidecar's old refresh interval, so
+#                 worst-case staleness as seen by a browser is unchanged.
+#
+#                 SAFE HERE, AND UNSAFE ON THE IDENTITY ROUTE — the one genuine trap in this
+#                 pair of files. catalyst-asset-cache stamps its Cache-Control through
+#                 customResponseHeaders, which OVERWRITE whatever the backend set. On the
+#                 per-identity endpoint that would serve one user's nav to the next for five
+#                 minutes, which is why manifest-route.yaml's header forbids it by name. On
+#                 THIS endpoint the body is identical for every caller and carries no identity
+#                 at all, so a shared cache is correct rather than dangerous.
+#
+# NO forward-auth, deliberately and necessarily. 21 of the 58 themed hosts have no forward-auth
+# at all (grafana, plex, jellyfin, komga, kavita, minio, homeassistant, linkwarden, argocd…),
+# are on bare `authentik` rather than `authentik-lan`, or are HTTP-only. They cannot use the
+# per-identity endpoint — measured on grafana, where it returns 400 and catalyst-nav.js retries
+# three times and renders nothing — so this path is what they depend on. Adding auth here
+# unthemes a fifth of the cluster.
+#
+# NO catalyst-nav / catalyst-inject-* middleware, ever. Those are rewriteBody plugins; pointed
+# at a JSON document they rewrite the body the client is about to parse.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-nav-public
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: public-manifest
+    app.kubernetes.io/part-of: catalyst
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Path(`/catalyst/resources/catalyst-nav.json`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)
+      kind: Rule
+      # MUST exceed asset-route.yaml's 10000. See the header.
+      priority: 10001
+      middlewares:
+        # FIRST: reject off-LAN before any body or cache work happens.
+        - name: lan-only
+          namespace: traefik
+        - name: catalyst-compress
+          namespace: traefik
+        - name: catalyst-asset-cache
+          namespace: traefik
+      services:
+        - name: catalyst-nav-public
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-nav-public-http
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: public-manifest
+    app.kubernetes.io/part-of: catalyst
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Deliberately NOT redirect-https: Plex and Jellyfin are served over plain HTTP and fetch
+    # this manifest as a same-origin subresource. See the header.
+    - match: Path(`/catalyst/resources/catalyst-nav.json`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)
+      kind: Rule
+      priority: 10001
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: catalyst-compress
+          namespace: traefik
+        - name: catalyst-asset-cache
+          namespace: traefik
+      services:
+        - name: catalyst-nav-public
+          port: 80

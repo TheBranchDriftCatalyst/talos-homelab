@@ -15,15 +15,22 @@ package controller
 // composite and Kyverno's annotation derivation). It never asks "what changed?", only "what
 // should the manifest be now?".
 //
-// WHAT IT DOES NOT DO: serve anything. The model is published into a ConfigMap and, as of
-// phase 3, handed to internal/navserve as a snapshot — but infrastructure/base/themepark's
-// sidecar keeps writing and serving its own catalyst-nav.json, untouched, and no IngressRoute
-// routes anything to the operator's manifest port yet. Switching the client over is phase 4.
+// WHAT IT DOES NOT DO: serve anything itself. It publishes into a ConfigMap and hands
+// internal/navserve a Snapshot, which two HTTP handlers read. An earlier revision of this
+// comment said the themepark sidecar "keeps writing and serving its own catalyst-nav.json,
+// untouched"; THAT SIDECAR IS DELETED and this reconcile is the only thing that derives the
+// nav model anywhere in the cluster.
 //
-// PHASE 3's addition is the Snapshots store below. The per-identity endpoint filters the SAME
-// model this reconcile publishes, built ONCE here rather than per request, so "what the
-// endpoint serves" and "what the ConfigMap holds" are the same object and cannot drift — see
-// internal/navserve/snapshot.go.
+// ONE BUILD PER RECONCILE FEEDS ALL THREE CONSUMERS, which is what makes them unable to
+// disagree:
+//
+//	the ConfigMap            catalyst-nav-manifest, for humans and for diffing
+//	the public endpoint      serves Snapshot.Bytes verbatim — literally the same []byte
+//	                         written to the ConfigMap, not a second Encode of the same model
+//	the per-identity endpoint filters this model through the visibility Index, per request,
+//	                         because its body differs by caller and cannot be precomputed
+//
+// See internal/navserve/snapshot.go.
 
 import (
 	"context"
@@ -118,7 +125,7 @@ func (r *NavReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (rec
 	// total fail-open on group visibility.
 	res := Resolve(model, groups.Items, entries.Items)
 
-	revision, err := r.publish(ctx, model)
+	encoded, revision, err := r.publish(ctx, model)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -126,6 +133,7 @@ func (r *NavReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (rec
 		r.Snapshots.Publish(&navserve.Snapshot{
 			Manifest: model,
 			Index:    BuildVisibilityIndex(groups.Items, entries.Items),
+			Bytes:    encoded,
 			Revision: revision,
 			BuiltAt:  time.Now(),
 		})
@@ -151,12 +159,24 @@ func (r *NavReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (rec
 // (phase 3's server, a future Flux healthcheck) would see churn that does not reflect a nav
 // change. build_nav.py has the same property for the same reason — see its sorted/byte-stable
 // comments.
-// It returns the revision (the sha256 of the manifest bytes) so the caller can stamp the same
-// value onto the snapshot the per-identity endpoint serves. Returning it rather than
-// recomputing it is the point: the ConfigMap and the endpoint then provably describe one build.
-func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) (string, error) {
-	payload := string(navmodel.Encode(m))
-	sum := sha256.Sum256([]byte(payload))
+// It returns BOTH the encoded bytes and the revision (their sha256), so the caller can put the
+// exact same bytes on the snapshot the endpoints serve. Returning them rather than
+// re-encoding and re-hashing is the point, and it is a stronger guarantee than it looks:
+//
+//   - the ConfigMap's value and the PUBLIC endpoint's response body are now one []byte, not
+//     two calls to one function. "They cannot disagree" stops being a property of
+//     navmodel.Encode being deterministic and becomes a property of there only being one
+//     copy. That is the whole claim this migration rests on, so it is worth not re-deriving.
+//   - it takes an encode off the public endpoint's hot path, which since the build_nav.py
+//     sidecar was deleted is every themed pageview in the cluster rather than the handful of
+//     opted-in apps the per-identity endpoint sees.
+//
+// The per-identity endpoint still encodes per request, necessarily: its body is the filtered
+// model and differs by caller, so there is nothing to precompute.
+func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) ([]byte, string, error) {
+	encoded := navmodel.Encode(m)
+	payload := string(encoded)
+	sum := sha256.Sum256(encoded)
 	revision := hex.EncodeToString(sum[:])
 
 	var cm corev1.ConfigMap
@@ -176,13 +196,13 @@ func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) (stri
 			Data: map[string]string{ManifestKey: payload},
 		}
 		cm.Annotations = map[string]string{"nav.catalyst.io/manifest-sha256": revision}
-		return revision, r.Client.Create(ctx, &cm)
+		return encoded, revision, r.Client.Create(ctx, &cm)
 	case err != nil:
-		return "", fmt.Errorf("reading published ConfigMap: %w", err)
+		return nil, "", fmt.Errorf("reading published ConfigMap: %w", err)
 	}
 
 	if cm.Data[ManifestKey] == payload {
-		return revision, nil
+		return encoded, revision, nil
 	}
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
@@ -192,7 +212,7 @@ func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) (stri
 		cm.Annotations = map[string]string{}
 	}
 	cm.Annotations["nav.catalyst.io/manifest-sha256"] = revision
-	return revision, r.Client.Update(ctx, &cm)
+	return encoded, revision, r.Client.Update(ctx, &cm)
 }
 
 // writeStatuses stamps conditions onto every NavGroup and NavEntry.

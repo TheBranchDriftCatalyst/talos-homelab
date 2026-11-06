@@ -162,3 +162,46 @@ spec:
         - ports:
             - port: "8082"
               protocol: TCP
+---
+# Ingress to the PUBLIC manifest endpoint (port 8083) from Traefik only.
+#
+# THE REASONING HERE IS DIFFERENT FROM THE POLICY ABOVE, and conflating the two would be a
+# mistake in both directions. On 8082 the network policy IS the security control, because that
+# handler decides what a caller may see from a header a caller could forge. On 8083 nothing is
+# decided from any header: the body is unfiltered, identical for every caller, and byte-for-byte
+# what the deleted sidecar's nginx served to any LAN browser that asked. There is no privilege
+# to escalate by reaching this port.
+#
+# So this rule is NOT a confidentiality boundary — the confidentiality boundary for this data is
+# `lan-only` + `HostRegexp(^[a-z0-9-]+\.talos00$)` on the IngressRoute, exactly as it was for
+# the static file (see infrastructure/base/catalyst-nav/operator/public-manifest-route.yaml and
+# the disclosure writeup in infrastructure/base/themepark/asset-route.yaml). What it is instead
+# is ordinary least-privilege plus availability hygiene: the namespace default-denies, this
+# endpoint is now on the hot path for every themed pageview in the cluster, and the operator is
+# a single replica with a 128Mi limit. Letting arbitrary in-cluster workloads hold connections
+# against it buys nothing and risks the nav bar for all 58 themed hosts.
+#
+# A SEPARATE POLICY OBJECT from the 8082 rule, for the reason that one gives for being separate
+# from the metrics rule: quarantining or deleting either endpoint should be one object and must
+# not disturb the other. Folding 8083 into the policy above would also bury the distinction
+# drawn in the first paragraph, which is the thing a future reader most needs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-public-manifest-ingress-from-traefik
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: public-manifest
+spec:
+  endpointSelector:
+    matchLabels:
+      app: catalyst-nav-operator
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "8083"
+              protocol: TCP

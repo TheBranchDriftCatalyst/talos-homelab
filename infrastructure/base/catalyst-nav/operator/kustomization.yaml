@@ -8,11 +8,16 @@
 # is now reviewing THAT file, whose header carries the two preconditions (the operator image
 # does not exist yet; the NavEntry webhook is failurePolicy: Fail).
 #
-# WHAT IT CHANGES WHEN IT IS DEPLOYED: nothing user-visible. It publishes the nav model into
-# the `catalyst-nav-manifest` ConfigMap and nothing reads that ConfigMap.
-# infrastructure/base/themepark's discover.sh + build_nav.py keep deriving and serving
-# catalyst-nav.json exactly as before. The two outputs are meant to be diffed — see
-# operator/testdata/extract-corpus.sh and `catalyst-nav-operator render`.
+# THIS IS NOW THE SOLE PRODUCER OF THE NAV MANIFEST. The claim above — that deploying this
+# changes nothing user-visible because themepark's discover.sh + build_nav.py keep deriving and
+# serving catalyst-nav.json — was true for phases 2 through 4 and is FALSE NOW. That sidecar is
+# deleted. This operator both publishes the `catalyst-nav-manifest` ConfigMap and serves the
+# manifest on two HTTP endpoints, one public and unfiltered at the sidecar's old path, one
+# per-identity; see public-manifest-endpoint.yaml and manifest-endpoint.yaml respectively.
+#
+# The parity gate that justified the deletion did not go with it: build_nav.py's output for the
+# whole cluster corpus plus 38 edge cases is frozen in testdata/golden/build_nav_oracle.json and
+# `task nav:parity` still diffs against it byte for byte.
 #
 # The one thing it DOES change on day one is NavEntry admission: the webhook starts refusing a
 # dangling navGroupRef. That is the point (see webhook.yaml), and it cannot affect any other
@@ -41,4 +46,10 @@ resources:
   - webhook.yaml # Service, cert-manager Certificate, ValidatingWebhookConfiguration
   - manifest-endpoint.yaml # phase 3: Service for the per-identity manifest
   - manifest-route.yaml # phase 4: the IngressRoute — forward-auth + lan-only, NO asset cache
-  - cilium-network-policy.yaml # default-deny + DNS/apiserver/metrics/manifest flows
+  # The PUBLIC manifest: Service + the two IngressRoutes that take
+  # /catalyst/resources/catalyst-nav.json off the theme server. This is what made the
+  # build_nav.py sidecar deletable; read public-manifest-endpoint.yaml for why it is served
+  # from here rather than mirrored into ns themepark with reflector.
+  - public-manifest-endpoint.yaml
+  - public-manifest-route.yaml
+  - cilium-network-policy.yaml # default-deny + DNS/apiserver/metrics/manifest/public flows

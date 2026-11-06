@@ -427,8 +427,11 @@ produced it.
    whole rule is "put ONE middleware reference on the route that serves its HTML."
 2. `infrastructure/base/themepark/asset-route.yaml:22-75` — the disclosure writeup. Explains
    why both `HostRegexp` and `lan-only` are required and why neither alone is enough.
-3. `infrastructure/base/themepark/server/nav/build_nav.py:130-200` — the derived-discovery
-   philosophy the applet registry must follow.
+3. `infrastructure/base/catalyst-nav/operator/internal/navmodel/derive.go` — the
+   derived-discovery philosophy the applet registry must follow. (This was
+   `themepark/server/nav/build_nav.py:130-200`, the Python sidecar; it was deleted once the
+   operator was proven byte-identical to it and is now the sole producer. `derive.go` is a
+   faithful port, so the philosophy is unchanged — only the language.)
 4. `infrastructure/base/themepark/server/resources/catalyst-nav.js:379-439` — `build()`,
    where the slot API has to go.
 5. `catalyst-themepark/build.sh:140-175` — the publish contract. **Note `build.sh:143` is an

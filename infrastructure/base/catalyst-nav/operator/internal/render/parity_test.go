@@ -1,71 +1,34 @@
 package render
 
-// THE PARITY PROOF. Runs the real infrastructure/base/themepark/server/nav/build_nav.py and
-// this package over the same inputs and compares BYTES.
+// THE PARITY PROOF. Compares this package's output, BYTE FOR BYTE, against
+// infrastructure/base/themepark/server/nav/build_nav.py — the sidecar implementation this
+// port replaced.
 //
-// Why differential rather than golden files: a golden file records what the port does today
-// and would be regenerated from the port the first time it disagreed with the script. Running
-// the script makes the SCRIPT the oracle, which is the only arrangement in which an empty diff
-// means the migration is safe. Every "new coverage" spec in navmodel's table tests was written
-// against the script's behaviour and verified here — not asserted from a reading of it.
+// THE SCRIPT IS GONE. It was deleted when the operator became the sole producer of the nav
+// manifest, which is what this port existed to make possible. Its output did not go with it:
+// every fixture below was run through the real script first and its stdout and refusal
+// reasons transcribed into testdata/golden/build_nav_oracle.json. See oracle_test.go for why
+// that is still a genuine oracle and not the self-confirming golden file this header used to
+// (correctly) argue against — the short version is that the regeneration path is what made
+// golden files dangerous, and there is no longer any code in this repo that can rewrite those
+// bytes.
 //
-// Skips cleanly when python3 is unavailable (CI runs Python, so this is about a bare dev box,
-// not about letting the gate be optional). Phase 6 must not be signed off on a skipped run —
-// see the t.Log in TestParityOnClusterCorpus.
+// WHAT THE GATE STILL PROVES: that the Go renderer reproduces, exactly, what the deleted
+// Python produced for 85 recorded (input, environment) pairs — the whole committed
+// IngressRoute corpus under eight environments, plus 38 hand-built edge cases under two
+// scopes each. A regression in navmodel shows up here as a byte diff.
+//
+// WHAT IT NO LONGER PROVES: anything about an input nobody recorded. A new fixture has no
+// oracle and cannot acquire one, so assertParity FAILS on an unrecorded case rather than
+// skipping it. That is deliberate — the alternative is a gate that quietly shrinks.
 
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// buildNavPy locates the script relative to this file: .../infrastructure/base/catalyst-nav/
-// operator/internal/render -> up five to infrastructure/base.
-func buildNavPy(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := filepath.Join(wd, "..", "..", "..", "..", "themepark", "server", "nav", "build_nav.py")
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(abs); err != nil {
-		t.Fatalf("build_nav.py not found at %s: %v\n"+
-			"If phase 6 has already deleted it, this test must be deleted in the SAME "+
-			"commit, with the final diff recorded in the commit message.", abs, err)
-	}
-	return abs
-}
-
-func python(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 not on PATH; the parity gate cannot run on this machine")
-	}
-	return p
-}
-
-// runPython drives the script exactly as discover.sh does.
-func runPython(t *testing.T, script, input string, env Env) (stdout, stderr string) {
-	t.Helper()
-	cmd := exec.Command(python(t), script)
-	cmd.Stdin = strings.NewReader(input)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	cmd.Env = append(os.Environ(), "NAV_SCOPE="+env.Scope, "NAV_DEFAULTS="+env.Defaults)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("build_nav.py failed: %v\nstderr: %s", err, errb.String())
-	}
-	return out.String(), errb.String()
-}
 
 func runGo(t *testing.T, input string, env Env) (stdout, stderr string) {
 	t.Helper()
@@ -77,20 +40,21 @@ func runGo(t *testing.T, input string, env Env) (stdout, stderr string) {
 }
 
 // assertParity is the whole point: identical bytes on stdout, and the same refusal reasons on
-// stderr.
+// stderr, against what build_nav.py produced for this exact input and environment.
 func assertParity(t *testing.T, name, input string, env Env) {
 	t.Helper()
-	script := buildNavPy(t)
-	pyOut, pyErr := runPython(t, script, input, env)
+	want := oracleFor(t, input, env)
 	goOut, goErr := runGo(t, input, env)
-	if pyOut != goOut {
-		t.Errorf("%s: MANIFEST BYTES DIFFER\n  python: %s\n      go: %s", name, pyOut, goOut)
+	if want.Stdout != goOut {
+		t.Errorf("%s: MANIFEST BYTES DIFFER\n  build_nav.py: %s\n            go: %s",
+			name, want.Stdout, goOut)
 	}
-	// stderr is compared by reason, not verbatim: the script interleaves applet-name
-	// progress lines with refusals and the order of the two passes is not part of the
-	// contract. The REASONS are, because tests/nav/test_build_nav.py asserts on them.
-	if gotPy, gotGo := reasons(pyErr), reasons(goErr); gotPy != gotGo {
-		t.Errorf("%s: refusal reasons differ\n  python: %v\n      go: %v", name, gotPy, gotGo)
+	// stderr is compared by reason, not verbatim: the script interleaved applet-name
+	// progress lines with refusals and the order of the two passes was never part of the
+	// contract. The REASONS are.
+	if got := reasons(goErr); want.Reasons != got {
+		t.Errorf("%s: refusal reasons differ\n  build_nav.py: %v\n            go: %v",
+			name, want.Reasons, got)
 	}
 }
 
@@ -122,16 +86,7 @@ func TestParityOnClusterCorpus(t *testing.T) {
 		t.Fatalf("corpus missing (%v); regenerate with testdata/extract-corpus.sh", err)
 	}
 	input := string(b)
-	for _, env := range []Env{
-		{},             // default: NAV_SCOPE=themed
-		{Scope: "all"}, // the escape hatch
-		{Scope: "all", Defaults: `{"revealAt":4}`}, // cluster-wide defaults
-		{Defaults: `{"fx":false,"intensity":1}`},   // intensity 1 -> must render 1.0
-		{Defaults: `{"notAKey":1,"mode":"push"}`},  // key filtering
-		{Defaults: `[1]`},                          // non-object: ignored with a log
-		{Scope: "ALL"},                             // .lower() on NAV_SCOPE
-		{Scope: "themed-ish"},                      // anything != all keeps the filter
-	} {
+	for _, env := range corpusEnvs() {
 		name := "scope=" + env.Scope + " defaults=" + env.Defaults
 		t.Run(name, func(t *testing.T) { assertParity(t, name, input, env) })
 	}
@@ -143,11 +98,136 @@ func TestParityOnClusterCorpus(t *testing.T) {
 // could pass while the branch was wrong.
 func TestParityOnEdgeCases(t *testing.T) {
 	const mwNav = `[{"name":"catalyst-nav","namespace":"traefik"}]`
-	cases := map[string]string{
+	cases := edgeCaseInputs()
+
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			assertParity(t, name, input, Env{})
+			// Re-run every case under NAV_SCOPE=all: the filter is the single biggest
+			// behavioural switch and half these fixtures are shaped by it.
+			assertParity(t, name+" [scope=all]", input, Env{Scope: "all"})
+		})
+	}
+}
+
+// TestParityHarnessCanFail guards the guard. A gate whose oracle is never consulted, or whose
+// comparison always passes, is worse than no test: it reports agreement it never checked. This
+// mutates the input on the GO side only and requires the comparison against the frozen oracle
+// to notice.
+//
+// It matters MORE now than when the oracle was a live subprocess, not less. A frozen golden
+// set can fail silently in ways a subprocess cannot: an empty `cases` map, a key scheme that
+// never matches, an oracleFor that returns a zero value instead of failing. Each of those
+// would make every assertParity compare "" against "" and pass. So this test asserts all
+// three of the things that could rot — that the oracle is non-empty, that it looks like a nav
+// manifest, and that a one-byte input change is actually detected.
+func TestParityHarnessCanFail(t *testing.T) {
+	want := oracleFor(t, harnessCanFailInput, Env{})
+
+	// 1. The frozen oracle must really hold build_nav.py's manifest, not a zero value. A
+	//    Go-only round trip would agree with itself even if both sides were wrong.
+	if !strings.Contains(want.Stdout, `"name":"A"`) {
+		t.Fatalf("frozen oracle produced %q, which does not look like a nav manifest",
+			want.Stdout)
+	}
+
+	// 2. The unmutated input must MATCH, or the comparison is broken in the other
+	//    direction and every case below is failing for an unrelated reason.
+	if goOut, _ := runGo(t, harnessCanFailInput, Env{}); goOut != want.Stdout {
+		t.Fatalf("unmutated fixture already differs from the oracle:\n  oracle: %s\n      go: %s",
+			want.Stdout, goOut)
+	}
+
+	// 3. A mutated input must DIFFER. This is the assertion that fails if the comparison
+	//    is not actually looking at the manifest.
+	mutated := strings.Replace(harnessCanFailInput, `"A"`, `"B"`, 1)
+	if mutated == harnessCanFailInput {
+		t.Fatal("the mutation did not change the fixture; this test proves nothing")
+	}
+	if goOut, _ := runGo(t, mutated, Env{}); goOut == want.Stdout {
+		t.Fatal("the harness compared two different inputs and saw no difference -- " +
+			"the comparison is not actually looking at the manifest")
+	}
+
+	// 4. The oracle set must be populated. An empty map would make oracleFor fail, but
+	//    only for cases that are actually run; stating the count here means a truncated
+	//    golden file cannot pass as a smaller gate.
+	if n := len(loadOracle(t).Cases); n < 80 {
+		t.Fatalf("frozen oracle holds only %d cases; the golden file is truncated", n)
+	}
+}
+
+// TestNullItemsDoesNotCrashThisPort records the ONE input on which this port deliberately did
+// not match the script: `{"items":null}`.
+//
+// FOUND BY THE DIFFERENTIAL, not by reading the code. build_nav.py's main() did
+// `doc.get("items", [])` with no `or []`, so a null items array raised
+// `TypeError: 'NoneType' object is not iterable` and the script exits 1 — while
+// discover_applets(), four lines of the same file away, writes `doc.get("items", []) or []`
+// and handles it. The two spellings disagree and only one is guarded.
+//
+// Not reproduced, and not reported as a parity failure either, for three reasons:
+//   - kubectl never emits `"items":null` for a list (an empty list is `[]`), so the branch is
+//     unreachable through the sidecar's actual input path.
+//   - discover.sh treats a non-zero exit as "keep serving the previous manifest", so even in
+//     the cluster the script's behaviour here is a no-op, not an outage.
+//   - a reconciler cannot adopt "crash the process" as its handling of a decode edge case.
+//
+// THE CRASH IS NO LONGER ASSERTED, because the script is deleted and there is nothing left to
+// run. It WAS asserted, by the previous revision of this test, against the real build_nav.py:
+// the subprocess exited non-zero with "TypeError: 'NoneType' object is not iterable" on
+// stderr. That is a recorded historical observation now, not a live claim, and the distinction
+// is stated here rather than left for a reader to discover — a comment that describes
+// behaviour nothing checks is exactly the rot this file is careful about elsewhere.
+//
+// Deliberately NOT frozen into the oracle either: the golden set records stdout and refusal
+// reasons for inputs the script HANDLED, and an entry whose meaning is "this crashed" would
+// have to be special-cased by assertParity, putting a branch for one unreachable input into
+// the comparison every other case flows through.
+//
+// What remains testable, and is the half that actually constrains the shipped code, is this
+// port's behaviour: an empty manifest rather than a crash.
+func TestNullItemsDoesNotCrashThisPort(t *testing.T) {
+	const input = `{"items":null}`
+	out, _ := runGo(t, input, Env{})
+	if out != `{"groups":[]}` {
+		t.Fatalf("render produced %s, want an empty manifest", out)
+	}
+}
+
+// corpusEnvs is the environment matrix the cluster corpus is rendered under. Package-level,
+// not inline in the test, because the frozen-oracle golden set is keyed by (input, env) and
+// the generator that produced it walked EXACTLY this list. Adding an entry here without a
+// matching golden fails with "no frozen oracle output" rather than silently passing --
+// see the header of this file.
+func corpusEnvs() []Env {
+	return []Env{
+		{}, // unset NAV_SCOPE, which falls back to themed
+		// The LITERAL value the operator's Deployment sets (and the deleted sidecar set
+		// before it). Added when the oracle was frozen, because the matrix had only ever
+		// covered the UNSET case and "unset behaves like themed" was an inference from
+		// `.lower() != "all"` rather than something recorded. `task nav:parity` looks this
+		// case up by name, so the shipped configuration is now the one the gate checks.
+		{Scope: "themed"},
+		{Scope: "all"}, // the escape hatch
+		{Scope: "all", Defaults: `{"revealAt":4}`}, // cluster-wide defaults
+		{Defaults: `{"fx":false,"intensity":1}`},   // intensity 1 -> must render 1.0
+		{Defaults: `{"notAKey":1,"mode":"push"}`},  // key filtering
+		{Defaults: `[1]`},                          // non-object: ignored with a log
+		{Scope: "ALL"},                             // .lower() on NAV_SCOPE
+		{Scope: "themed-ish"},                      // anything != all keeps the filter
+	}
+}
+
+// edgeCaseInputs pins the cases a real cluster does not currently contain. Package-level for
+// the same reason as corpusEnvs above.
+func edgeCaseInputs() map[string]string {
+	const mwNav = `[{"name":"catalyst-nav","namespace":"traefik"}]`
+	return map[string]string{
 		"empty document": `{"items":[]}`,
 		"no items key":   `{}`,
 		// `{"items":null}` is NOT here: it crashes build_nav.py, so there is no oracle
-		// output to compare against. See TestNullItemsDivergesFromBuildNavPy, which pins
+		// output to compare against. See TestNullItemsDoesNotCrashThisPort, which records
 		// both the crash and this port's refusal to reproduce it.
 
 		"metadata.name absent, host fallback titled": `{"items":[{"metadata":{"namespace":"x",
@@ -353,81 +433,5 @@ func TestParityOnEdgeCases(t *testing.T) {
 		"quotes and backslashes in a name": `{"items":[{"metadata":{"name":"x","namespace":"x","annotations":{
 			"gethomepage.dev/enabled":"true","gethomepage.dev/name":"He said \"hi\" \\ bye"}},
 			"spec":{"routes":[{"match":"Host(` + "`q.talos00`" + `)","middlewares":` + mwNav + `}]}}]}`,
-	}
-
-	for name, input := range cases {
-		t.Run(name, func(t *testing.T) {
-			assertParity(t, name, input, Env{})
-			// Re-run every case under NAV_SCOPE=all: the filter is the single biggest
-			// behavioural switch and half these fixtures are shaped by it.
-			assertParity(t, name+" [scope=all]", input, Env{Scope: "all"})
-		})
-	}
-}
-
-// TestParityHarnessCanFail guards the guard. A differential test whose oracle is never
-// consulted, or whose comparison always passes, is worse than no test: it reports agreement it
-// never checked. This mutates the input to ONE side and requires the comparison to notice.
-func TestParityHarnessCanFail(t *testing.T) {
-	script := buildNavPy(t)
-	const mwNav = `[{"name":"catalyst-nav","namespace":"traefik"}]`
-	a := `{"items":[{"metadata":{"name":"x","namespace":"x","annotations":{
-		"gethomepage.dev/enabled":"true","gethomepage.dev/name":"A"}},
-		"spec":{"routes":[{"match":"Host(` + "`h.talos00`" + `)","middlewares":` + mwNav + `}]}}]}`
-	b := strings.Replace(a, `"A"`, `"B"`, 1)
-
-	pyOut, _ := runPython(t, script, a, Env{})
-	goOut, _ := runGo(t, b, Env{})
-	if pyOut == goOut {
-		t.Fatal("the harness compared two different inputs and saw no difference -- " +
-			"the comparison is not actually looking at the manifest")
-	}
-	// And the oracle must really be the script: a Go-only round trip would agree with
-	// itself even if both were wrong.
-	if !strings.Contains(pyOut, `"name":"A"`) {
-		t.Fatalf("python oracle produced %s, which does not look like a nav manifest", pyOut)
-	}
-}
-
-// TestNullItemsDivergesFromBuildNavPy records the ONE input on which this port deliberately
-// does not match the script: `{"items":null}`.
-//
-// FOUND BY THIS DIFFERENTIAL, not by reading the code. build_nav.py's main() does
-// `doc.get("items", [])` with no `or []`, so a null items array raises
-// `TypeError: 'NoneType' object is not iterable` and the script exits 1 — while
-// discover_applets(), four lines of the same file away, writes `doc.get("items", []) or []`
-// and handles it. The two spellings disagree and only one is guarded.
-//
-// Not reproduced, and not reported as a parity failure either, for three reasons:
-//   - kubectl never emits `"items":null` for a list (an empty list is `[]`), so the branch is
-//     unreachable through the sidecar's actual input path.
-//   - discover.sh treats a non-zero exit as "keep serving the previous manifest", so even in
-//     the cluster the script's behaviour here is a no-op, not an outage.
-//   - a reconciler cannot adopt "crash the process" as its handling of a decode edge case.
-//
-// If build_nav.py is ever fixed to `or []`, this divergence closes and the case can move into
-// TestParityOnEdgeCases.
-func TestNullItemsDivergesFromBuildNavPy(t *testing.T) {
-	script := buildNavPy(t)
-	const input = `{"items":null}`
-
-	// The oracle really does crash — asserted, not assumed, so this comment cannot rot into
-	// a claim about behaviour nobody checked.
-	cmd := exec.Command(python(t), script)
-	cmd.Stdin = strings.NewReader(input)
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err == nil {
-		t.Fatal("build_nav.py now accepts {\"items\":null} -- the divergence is closed; " +
-			"move this case into TestParityOnEdgeCases and delete this test")
-	}
-	if !strings.Contains(errb.String(), "not iterable") {
-		t.Fatalf("build_nav.py failed for an unexpected reason: %s", errb.String())
-	}
-
-	// This port returns an empty manifest instead.
-	out, _ := runGo(t, input, Env{})
-	if out != `{"groups":[]}` {
-		t.Fatalf("render produced %s, want an empty manifest", out)
 	}
 }

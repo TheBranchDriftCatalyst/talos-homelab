@@ -2,18 +2,37 @@
 
 ## TL;DR
 
-The nav bar's link list comes from a **public static file** that lists every internal hostname
-in the cluster to anyone on the LAN. Phase 4 replaces it, **one app at a time**, with a
-**per-identity endpoint** that filters the manifest from the caller's Authentik groups.
+The nav bar's link list comes from a **public manifest** that lists every internal hostname in
+the cluster to anyone on the LAN. It is replaced, **one app at a time**, with a **per-identity
+endpoint** that filters the manifest from the caller's Authentik groups.
 
 - **Cut an app over** by adding `data-nav-manifest="identity"` to its own
   `catalyst-inject-<app>` middleware. **Roll it back** by deleting that one attribute.
-- **First two apps: `dbgate`, then `sonarr`.** dbgate is admin-only and low-traffic; sonarr is
-  the one non-admins actually use, which is the only way to observe the filtered view.
-- **Nothing is live yet.** The client ships with the static file as its default, so the
-  per-app attribute is the only switch, and no app has it.
-- **Two preconditions before anything:** the operator image must be built and pushed, and
-  `clusters/catalyst-cluster/catalyst-nav.yaml` must be applied.
+- **8 apps are cut over:** `dbgate`, `sonarr`, `radarr`, `prowlarr`, `sabnzbd`, `qbittorrent`,
+  `tautulli`, `overseerr` (host `seerr.talos00`). Each has its own injector and is on
+  `authentik-lan` + `websecure`, which are the three eligibility conditions.
+- **NEVER put the attribute on `catalyst-inject-nav`.** 47 hosts share it and 18 of those are
+  ineligible; flipping it breaks their bar entirely.
+- **The public path is no longer a FILE.** The `build_nav.py` nav-discovery sidecar is deleted
+  and the catalyst-nav operator serves `/catalyst/resources/catalyst-nav.json` itself — same
+  path, same bytes, still public/cacheable/unfiltered. 21 of 58 themed hosts can never use the
+  identity endpoint and depend on it.
+
+### What a cut-over app's users actually see
+
+One NavGroup declares `spec.visibility`: `infrastructure` is gated to `talos-admin` /
+`cluster-admin`. So on a cut-over app the bar differs by who is looking, which is the entire
+point of the endpoint — measured against the live cluster:
+
+| caller | groups | items |
+| --- | --- | --- |
+| public endpoint (any of the 50 apps still on it) | 12 | 53 |
+| identity endpoint, non-admin | 11 | 48 |
+| identity endpoint, `talos-admin` or `cluster-admin` | 12 | 53 |
+
+The 5 hidden items are the Infrastructure dropdown (KubeView, System Graph, ArgoCD, CrowdSec,
+MinIO) — cluster-admin surfaces, deliberately. A non-admin on `sonarr.talos00` still gets a
+full bar, just without that one dropdown.
 
 ---
 
@@ -53,8 +72,10 @@ Both are outside this document's edits and neither is optional.
    NavEntry CREATE/UPDATE is refused cluster-wide while the operator pod is not Ready. Nothing
    creates NavEntries today, so that blast radius is currently zero.
 
-Until both are done, every app keeps reading the static file whether or not it carries the
-attribute — a cut-over app would simply get no bar.
+Both are done. Note that the operator being down now costs more than it did during the
+migration: it serves the PUBLIC manifest too, so there is no static file to fall back to. The
+public endpoint answers 503 before its first reconcile and the client retries three times —
+see the rollback section.
 
 ---
 
@@ -146,10 +167,12 @@ other group is unrestricted. So for an admin, nothing is filtered at all.
      })
    ).json()
    ```
-3. **Compare the group and item names**, not the bytes. The two producers are byte-identical
-   on the same input (`task nav:parity`), but the live inputs differ: the static file is
-   rebuilt by the sidecar every 300s from the cluster's IngressRoutes, while the operator
-   reconciles continuously. A new app can legitimately appear in one before the other.
+3. **Compare the group and item names.** Both endpoints are now fed by ONE build per
+   reconcile in a single process — the public endpoint serves the reconciler's exact bytes and
+   the identity endpoint filters the same model — so the old caveat here (a 300s sidecar loop
+   racing the operator, letting a new app appear in one before the other) no longer applies.
+   What legitimately differs between the two is the FILTER: expect the `Infrastructure` group
+   to be absent from the identity response unless you are in `talos-admin`/`cluster-admin`.
 4. **Confirm the headers**, which are the thing that cannot be allowed to regress:
    ```
    Cache-Control: private, no-store
@@ -215,15 +238,26 @@ then renders nothing. Remove the opt-in, not the backend.
 
 ### If you must stop everything immediately
 
-Revert the attribute everywhere it appears (two apps, if you followed this doc). The fleet is
-back on the static manifest in one reconcile. Suspending the `catalyst-nav` Kustomization is
-**not** the fast path — it leaves the attribute in place and the cut-over apps barless.
+Revert the attribute everywhere it appears (8 apps today — grep
+`data-nav-manifest` in `infrastructure/base/themepark/middlewares.yaml`). The fleet is back on
+the public manifest in one reconcile.
+
+**DO NOT suspend the `catalyst-nav` Kustomization, and this is now much worse advice than it
+was.** It was already not the fast path — it leaves the attribute in place and the cut-over
+apps barless. Since the `build_nav.py` sidecar was deleted, that Kustomization also owns the
+**public** manifest endpoint that the other ~50 themed hosts read, including the 21 that have
+no forward-auth. Suspending it, or deleting the operator, takes the nav bar off **every app in
+the cluster**, not just the cut-over ones. There is no static file behind it any more.
+
+The blast radius of the operator being down is therefore the whole bar, which is the one real
+cost of having deleted the duplicate. It is bounded: the bar is cosmetic, `catalyst-nav.js`
+retries three times and then goes quiet, and no host application is affected.
 
 ---
 
-## Why there is no fallback to the static file
+## Why there is no fallback to the public manifest
 
-The client deliberately does **not** fall back to the static manifest when the identity
+The client deliberately does **not** fall back to the public manifest when the identity
 endpoint refuses it. It renders no bar.
 
 Falling back would be wrong twice over. The static file is the public everything-manifest this

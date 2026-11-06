@@ -18,10 +18,15 @@ happen — the repo's own cautionary case is a schema comment that CLAIMED a con
 rule behind it. So: compared, every run.
 
 The shared-middleware trio is the same story one layer down. `themed` is derived from middleware
-NAMES, and the trio that must be EXCLUDED from that derivation now appears in four places (this
-XRD's CEL rules, build_nav.py's SHARED, the operator's sharedMiddlewares, and
-themepark/middlewares.yaml which defines them). Three of those four are machine-readable and are
-compared here. The fourth is the definition itself and is out of this file's reach.
+NAMES, and the trio that must be EXCLUDED from that derivation appears in three places (this
+XRD's CEL rules, the operator's sharedMiddlewares, and themepark/middlewares.yaml which defines
+them). Two of those three are machine-readable and are compared here. The third is the
+definition itself and is out of this file's reach.
+
+IT WAS FOUR PLACES until build_nav.py was deleted. For the length of the nav migration the
+derivation had two implementations — a Python sidecar and the Go operator — and this file had to
+pin both against the XRD. The operator is now the sole producer, so one copy and one test went
+away together.
 """
 import re
 from pathlib import Path
@@ -34,7 +39,6 @@ _ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pytest.ini").e
 XRD = _ROOT / "infrastructure/base/catalyst-websecure-ingress/xrd.yaml"
 COMPOSITION = _ROOT / "infrastructure/base/catalyst-websecure-ingress/composition.yaml"
 TAXONOMY = _ROOT / "infrastructure/base/catalyst-nav/taxonomy.yaml"
-BUILD_NAV = _ROOT / "infrastructure/base/themepark/server/nav/build_nav.py"
 DERIVE_GO = _ROOT / "infrastructure/base/catalyst-nav/operator/internal/navmodel/derive.go"
 
 # The trio as the XRD's CEL rules spell it. Asserted against the other two copies below rather
@@ -179,44 +183,50 @@ def test_xrd_cel_rules_exclude_exactly_the_shared_trio(nav_schema):
         )
 
 
-def test_build_nav_shared_set_matches(nav_schema):
-    """build_nav.py's SHARED is the live definition the CEL rules must track."""
-    src = BUILD_NAV.read_text()
-    block = re.search(r"SHARED = \{(.*?)\}", src, re.S)
-    assert block, "build_nav.py no longer defines a SHARED set; the CEL rules' premise is gone"
-    assert set(re.findall(r'"([^"]+)"', block.group(1))) == SHARED, (
-        "build_nav.py's SHARED set and the XRD's CEL exclusion list have diverged. The XRD "
-        "would then admit a claim whose declared `themed` disagrees with what the live "
-        "pipeline derives — which is the exact failure spec.nav exists to make impossible."
-    )
-
-
 def test_operator_shared_set_matches():
-    """And the operator's port of it, which phase 6 makes the only reader."""
+    """The operator's sharedMiddlewares is the live definition the CEL rules must track.
+
+    THIS USED TO BE TWO TESTS. build_nav.py carried its own `SHARED` set and was checked
+    separately, because for the length of the migration there were two implementations of the
+    derivation and both had to agree with the XRD. The sidecar is deleted and the operator is
+    now the sole producer, so there is one definition and one test — which is the point of
+    having done the migration, not a reduction in coverage. The four copies the module
+    docstring warns about are three.
+    """
     src = DERIVE_GO.read_text()
     block = re.search(r"sharedMiddlewares = map\[string\]struct\{\}\{(.*?)\n\}", src, re.S)
     assert block, "navmodel no longer defines sharedMiddlewares"
     assert set(re.findall(r'"([^"]+)"', block.group(1))) == SHARED, (
-        "the operator's sharedMiddlewares and the XRD's CEL exclusion list have diverged"
+        "the operator's sharedMiddlewares and the XRD's CEL exclusion list have diverged. The "
+        "XRD would then admit a claim whose declared `themed` disagrees with what the live "
+        "pipeline derives — which is the exact failure spec.nav exists to make impossible."
     )
 
 
-def test_build_nav_classifier_is_unchanged(nav_schema):
+def test_operator_classifier_is_unchanged(nav_schema):
     """Pin the two expressions the CEL rules are a translation OF.
 
+    RE-POINTED FROM build_nav.py TO derive.go, not weakened. The CEL rules were originally
+    derived from the Python classifier; the Go classifier was proven byte-equivalent to it over
+    the whole committed corpus plus 38 edge cases (see the catalyst-nav operator's
+    internal/render parity gate, whose oracle is build_nav.py's frozen output), and is now the
+    only implementation. So this asserts against the surviving one.
+
     This is deliberately a source-text assertion, which is normally a bad smell. It earns its
-    place because the CEL rules claim to be equivalent to these two lines, and equivalence to a
-    line that has silently changed is worth nothing. When this fails, the fix is not to update
-    the expected string — it is to re-derive both CEL rules from the new classifier and then
-    update it.
+    place because the CEL rules claim to be equivalent to these two conditions, and equivalence
+    to a line that has silently changed is worth nothing. When this fails, the fix is not to
+    update the expected string — it is to re-derive both CEL rules from the new classifier and
+    then update it.
     """
-    src = BUILD_NAV.read_text()
+    src = DERIVE_GO.read_text()
     for expr in (
-        'injected = any(n.startswith("catalyst") for n in names)',
-        'themed = any(n.startswith("catalyst-") and "nav" not in n for n in names)',
+        # injected: ANY catalyst* middleware, shared trio already subtracted by the caller.
+        'if strings.HasPrefix(n, "catalyst") {',
+        # themed: catalyst-<slug> but NOT anything with "nav" in the name.
+        'if strings.HasPrefix(n, "catalyst-") && !strings.Contains(n, "nav") {',
     ):
         assert expr in src, (
-            f"build_nav.py's classifier changed; {expr!r} is gone. The XRD's CEL rules are a "
+            f"the operator's classifier changed; {expr!r} is gone. The XRD's CEL rules are a "
             f"translation of it and must be re-derived, not merely re-pinned."
         )
 

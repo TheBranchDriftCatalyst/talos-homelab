@@ -33,6 +33,21 @@ type Snapshot struct {
 	Manifest *navmodel.Manifest
 	Index    visibility.Index
 
+	// Bytes is the UNFILTERED manifest already encoded — the exact []byte the reconciler
+	// wrote into the ConfigMap, handed over rather than re-derived.
+	//
+	// THIS IS WHAT THE PUBLIC ENDPOINT SERVES, and carrying it here is what makes "the
+	// public manifest and the ConfigMap are the same bytes" a structural fact instead of an
+	// inference from navmodel.Encode being deterministic. Since the build_nav.py sidecar was
+	// deleted, that path is fetched on every themed pageview in the cluster, so it also
+	// takes an encode off the hot path.
+	//
+	// MUST NOT BE MUTATED. Like Manifest, it is reachable through the snapshot and the only
+	// writer is the reconciler that built it before storing. A handler that needed to alter
+	// it would have to copy first — none does; the per-identity handler encodes its own
+	// filtered body and never touches this.
+	Bytes []byte
+
 	// Revision is the sha256 of the UNFILTERED manifest bytes — the same value the
 	// reconciler annotates onto the published ConfigMap. Served as an ETag-shaped header so
 	// a human comparing the endpoint against the ConfigMap can see at a glance whether they

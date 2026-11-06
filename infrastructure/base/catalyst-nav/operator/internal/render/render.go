@@ -1,20 +1,27 @@
 // Package render is the one-shot parity mode: stdin/stdout/stderr, byte-identical to
 // `python3 build_nav.py`.
 //
-// THIS IS THE PHASE 6 AUDIT GATE. The migration plan deletes
-// infrastructure/base/themepark/server/nav/ only once the operator's model provably agrees
-// with the script's for the whole cluster, and "provably" means a byte comparison, not a
-// reading of both. So this mode exists to be diffed:
+// THIS WAS THE AUDIT GATE THAT JUSTIFIED THE DELETION, and it still is the gate — but the
+// other half of the diff is now data, not a process. infrastructure/base/themepark/server/nav/
+// was deleted only once the operator's model provably agreed with the script's for the whole
+// cluster, byte for byte; the script's output for every fixture is frozen in
+// testdata/golden/build_nav_oracle.json and internal/render's tests diff against it.
 //
+// The old two-process recipe no longer runs, because build_nav.py is gone:
+//
+//	python3 infrastructure/base/themepark/server/nav/build_nav.py < /tmp/ir.json > /tmp/a.json   # DELETED
+//
+// What to run instead:
+//
+//	task nav:parity                                  # the committed corpus, both scopes
 //	kubectl get ingressroutes.traefik.io -A -o json > /tmp/ir.json
-//	python3 infrastructure/base/themepark/server/nav/build_nav.py < /tmp/ir.json > /tmp/a.json
-//	catalyst-nav-operator render < /tmp/ir.json > /tmp/b.json
-//	cmp /tmp/a.json /tmp/b.json
+//	catalyst-nav-operator render < /tmp/ir.json      # the LIVE cluster's manifest
 //
-// It deliberately takes the SAME input the sidecar does rather than talking to the apiserver
-// itself. Reading the cluster twice would make a difference in the two reads look like a
-// difference in the two models, and the whole value of the gate is that an empty diff means
-// something.
+// This mode deliberately takes the SAME input the sidecar did — a document on stdin — rather
+// than talking to the apiserver itself. Reading the cluster twice would make a difference in
+// the two reads look like a difference in the two models, and the whole value of the gate is
+// that an empty diff means something. It is also what makes the frozen oracle meaningful: the
+// recorded bytes are keyed by the exact stdin they were produced from.
 package render
 
 import (

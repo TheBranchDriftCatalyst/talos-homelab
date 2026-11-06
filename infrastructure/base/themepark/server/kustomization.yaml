@@ -11,9 +11,12 @@ kind: Kustomization
 # One kustomization cannot set both namespaces, so the server gets its own.
 namespace: themepark
 
+# rbac.yaml IS GONE. It held the themepark-nav ServiceAccount plus a cluster-wide read on
+# IngressRoutes, and existed only for the nav-discovery sidecar. The sidecar is deleted (the
+# catalyst-nav operator is the sole producer of the nav manifest now), so the grant is deleted
+# with it rather than left behind as a standing cluster-wide read nothing uses.
 resources:
   - namespace.yaml
-  - rbac.yaml
   - deployment.yaml
   - ingressroute.yaml
   - cilium-network-policy.yaml
@@ -66,9 +69,12 @@ configMapGenerator:
   - name: themepark-catalyst-nav
     files:
       - resources/catalyst-nav.js
-  # Discovery sidecar. Builds the nav manifest from the cluster's own
-  # gethomepage.dev annotations, so no app is ever named in this repo.
-  - name: themepark-nav-discovery
-    files:
-      - nav/discover.sh
-      - nav/build_nav.py
+  # THE themepark-nav-discovery ConfigMap IS GONE, along with nav/discover.sh and
+  # nav/build_nav.py. It carried the nav-discovery sidecar's script pair, which derived
+  # catalyst-nav.json from the cluster's gethomepage.dev annotations every 300 seconds.
+  #
+  # That derivation now happens in exactly one place, the catalyst-nav operator, which serves
+  # the result at the same path through a higher-priority Traefik route. build_nav.py's output
+  # was not lost with it: it is frozen as the oracle the operator's parity gate still runs
+  # against, at
+  #   infrastructure/base/catalyst-nav/operator/testdata/golden/build_nav_oracle.json
