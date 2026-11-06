@@ -134,6 +134,65 @@ pbcopy < /dev/null
 
 ---
 
+## The admin client config — a second credential, and this one expires
+
+`configs/talsecret.yaml` is the cluster's identity and never expires. The **admin client
+config** is a different thing with a different failure mode, and it lives in the same vault:
+a 1Password **Document** named `talos-admin-talosconfig`, in vault `catalyst-eso`.
+
+Stored 2026-11-06, verified by checksum against the local file. Restore it with:
+
+```bash
+op document get talos-admin-talosconfig --vault catalyst-eso --out-file talosconfig
+```
+
+(Named rather than written as a `op://…` URI on purpose — gitleaks flags that scheme, and the
+rest of this file names items the same way.)
+
+**It expires.** `talosctl config new` issues a client certificate with a default TTL of one
+year. The copy stored above runs to **2027-11-06**. When it lapses, every `talosctl` call
+fails — including `etcd members`, which is how the cold-boot script decides whether the
+cluster came back. Its failure message reads _"etcd only reached 0/3 … DO NOT bootstrap"_,
+so an expired certificate presents as a catastrophic etcd failure and invites exactly the
+wrong repair.
+
+This was caught on 2026-11-06 with **three days to spare**, during an audit of the shutdown
+scripts rather than by anything watching for it. Nothing alerts on it.
+
+### Renewing it
+
+```bash
+talosctl -n 192.168.1.54 config new /tmp/talosconfig.new --roles os:admin --crt-ttl 8760h
+```
+
+Then verify before replacing anything — the old one keeps working until it lapses, so there
+is no reason to overwrite an untested file:
+
+```bash
+TALOSCONFIG=/tmp/talosconfig.new talosctl -n 192.168.1.54 etcd members
+```
+
+### THERE ARE TWO COPIES, and the second one is the trap
+
+| Path | Used by |
+| ---- | ------- |
+| `configs/talosconfig` | the scripts and every `task talos:*` (they set `TALOSCONFIG`) |
+| `~/.talos/config` | **every `talosctl` you type by hand**, because that is the fallback when `TALOSCONFIG` is unset |
+
+Renewing only the repo copy leaves the scripts working and every interactive command dying on
+the old certificate — the same outage through a different door. Merge into the global config
+too, and make it current:
+
+```bash
+talosctl --talosconfig ~/.talos/config config merge /tmp/talosconfig.new
+talosctl --talosconfig ~/.talos/config config context admin@catalyst-cluster
+```
+
+Confirm with `talosctl config info` **with `TALOSCONFIG` unset** — that is the path a human
+actually exercises.
+
+---
+
 ## What NOT to do
 
 - **Do not** email it, Slack it, or put it in a note app.
