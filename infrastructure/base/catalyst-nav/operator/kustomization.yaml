@@ -1,11 +1,12 @@
 ---
 # The nav operator's workload. Phase 2 of the catalyst-nav strangler-fig migration.
 #
-# STILL NOT DEPLOYED, same as phase 1. The parent kustomization (../kustomization.yaml) is not
-# referenced by any Flux Kustomization in clusters/catalyst-cluster/, so nothing here reaches
-# the cluster yet — deliberately. The operator has never run against the live apiserver, and
-# putting an untested controller with a fail-closed admission webhook into a Flux-managed
-# cluster is a separate, reviewable step.
+# NO LONGER UNREFERENCED. clusters/catalyst-cluster/catalyst-nav.yaml (phase 4) points at the
+# parent kustomization, so this tree reaches the cluster as soon as that Kustomization is
+# applied. The judgement that putting an untested controller with a fail-closed admission
+# webhook into a Flux-managed cluster is a separate, reviewable step still holds — that step
+# is now reviewing THAT file, whose header carries the two preconditions (the operator image
+# does not exist yet; the NavEntry webhook is failurePolicy: Fail).
 #
 # WHAT IT CHANGES WHEN IT IS DEPLOYED: nothing user-visible. It publishes the nav model into
 # the `catalyst-nav-manifest` ConfigMap and nothing reads that ConfigMap.
@@ -37,5 +38,6 @@ resources:
   - rbac.yaml # SA + cluster-wide reads + namespaced ConfigMap write
   - deployment.yaml # the controller + webhook server
   - webhook.yaml # Service, cert-manager Certificate, ValidatingWebhookConfiguration
-  - manifest-endpoint.yaml # phase 3: Service for the per-identity manifest. NO IngressRoute.
+  - manifest-endpoint.yaml # phase 3: Service for the per-identity manifest
+  - manifest-route.yaml # phase 4: the IngressRoute — forward-auth + lan-only, NO asset cache
   - cilium-network-policy.yaml # default-deny + DNS/apiserver/metrics/manifest flows

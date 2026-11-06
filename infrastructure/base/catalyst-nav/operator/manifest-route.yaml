@@ -1,0 +1,119 @@
+---
+# PHASE 4: the route that finally puts a client in front of the per-identity manifest.
+#
+# manifest-endpoint.yaml (the Service, phase 3) names the three things this file has to get
+# right. They are addressed here in the order it lists them, because each one is a silent
+# failure rather than a loud one.
+#
+# ── 1. NO `catalyst-asset-cache`, AND NO OTHER `catalyst-*` MIDDLEWARE ───────────────────────
+#
+# The middleware list below is exactly two entries and must stay that way. Two separate
+# catalyst-* middlewares would each break this route in their own way:
+#
+#   catalyst-asset-cache  stamps `public, max-age=300, stale-while-revalidate=3600` through
+#                         customResponseHeaders, which OVERWRITE what the backend set. The
+#                         handler writes `private, no-store` on every path precisely to stop
+#                         one user's nav being served to the next, and this middleware would
+#                         undo that for five minutes at a time. The handler's path is outside
+#                         /catalyst/ so `PathPrefix(`/catalyst/`)` cannot attach it by
+#                         accident -- but nothing stops a hand-written route naming it, which
+#                         is the hazard phase 3 wrote down, and this is the route it meant.
+#   catalyst-nav          (and every catalyst-inject-*) is a rewriteBody plugin. Pointed at a
+#                         JSON API it rewrites the body the client is about to parse. The
+#                         catalyst-injected-applet XRD refuses these on its own API route for
+#                         the same reason.
+#
+# catalyst-compress is omitted too, though it is harmless: the body is a few KB, and the
+# shortest middleware list is the one that cannot have the wrong thing added to it.
+#
+# ── 2. FORWARD-AUTH + lan-only ───────────────────────────────────────────────────────────────
+#
+# Forward-auth is what makes X-authentik-groups mean anything: Traefik asks the outpost, and
+# REPLACES whatever the client sent under those names with the outpost's answer. Without it
+# the handler's fail-closed default serves the anonymous subset to everyone.
+#
+# `authentik-lan`, NOT `authentik` -- and phase 3's note says `authentik`, so this is a
+# deliberate departure from it. That note was written before the TALOS-22nn cutover had
+# landed; in the tree today `authentik-lan` carries 51 route references and `authentik` 5. The
+# two are not interchangeable: `authentik` resolves through the embedded outpost and
+# advertises https://auth.knowledgedump.space, `authentik-lan` resolves through
+# talos00-outpost and advertises https://auth.talos00. Every app we would cut over is on
+# `authentik-lan`, and the providers are `forward_single` with no cookie_domain, so the
+# session cookie is scoped to each app's own host. Attaching the OTHER middleware here would
+# ask a different outpost about a cookie it never issued -- which fails closed, quietly, as
+# the anonymous subset.
+#
+# NO PARTNER EDIT in authentik-lan-outpost/app-callbacks.yaml is needed, which is the usual
+# companion to touching forward-auth. That file exists so an app's /outpost.goauthentik.io/
+# callback is answered by the same outpost as its auth check. This route has no host of its
+# own -- it rides on whatever *.talos00 host the page was already loaded from -- so the
+# callback in play is that host's existing one. The corollary is that a host still on
+# `authentik` gets no bar on the identity manifest, not a broken login: see the cutover doc.
+#
+# `lan-only` FIRST, so an off-LAN request is rejected before the outpost is ever consulted --
+# the same order as the asset route and every CatalystWebSecureIngress claim.
+#
+# WRITTEN BY HAND, NOT INHERITED. Kyverno's ingressroute-lan-only-talos00 policy prepends
+# lan-only automatically, but it deliberately SKIPS any match containing HostRegexp (the
+# landmine guard that protects the shared outpost callback route). A HostRegexp route
+# therefore gets nothing from that policy and must carry lan-only literally. Do not remove it
+# on the assumption that the mutation will put it back; it will not, and the loss would not
+# show up as Flux drift either.
+#
+# ── 3. websecure ONLY, deliberately ──────────────────────────────────────────────────────────
+#
+# The asset route has a `web` twin on purpose, because Plex and Jellyfin are served over plain
+# HTTP and an HTTPS-only asset origin would leave them unthemed. This route has NO such twin,
+# and that asymmetry is the point: every Authentik proxy provider here has an https
+# external_host, so the session cookie is `Secure` and a browser will not send it over plain
+# HTTP. A `web` twin would therefore answer 200 with the ANONYMOUS subset to a logged-in user
+# and look like it was working. HTTP-only apps keep the static manifest; they are not
+# candidates for cutover, and that is a property of the cookie, not of this route.
+#
+# One object, one entrypoint, for the separate reason that a combined web+websecure
+# IngressRoute gets Kyverno's `tls: {}` injected, becomes TLS-only, and silently 404s the HTTP
+# router. No `tls:` stanza here for the same reason -- ingressroute-tls-default supplies it.
+#
+# ── PRIORITY ─────────────────────────────────────────────────────────────────────────────────
+#
+# 10000, matching the asset route, and it does NOT contend with it: `PathPrefix(`/catalyst/`)`
+# does not match `/catalyst-nav/...` -- the tenth character is `-`, not `/` -- which is the
+# whole structural reason the handler's path was put outside that prefix. Traefik sorts equal
+# priorities with no secondary key, so an overlap at equal priority would be a coin flip
+# re-tossed on every config reload; there is no overlap here. What the number IS for is
+# beating each app's own `Host(...)` catch-all, which Traefik would otherwise rank higher
+# because it derives priority from rule length.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-nav-manifest
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: manifest
+    app.kubernetes.io/part-of: catalyst
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # PathPrefix rather than an exact Path: the handler's own path is configurable (NAV_PATH)
+    # and it already answers anything else under the prefix with a 404 that carries the same
+    # no-store headers as a 200. The route's job is to deliver the prefix to the right
+    # backend; deciding what is a valid path within it stays in one place, the handler.
+    - match: PathPrefix(`/catalyst-nav/`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        # FIRST: reject off-LAN before the outpost is consulted. Written literally because
+        # Kyverno's mutation skips HostRegexp routes -- see the header.
+        - name: lan-only
+          namespace: traefik
+        # The live convention (51 refs vs 5). NOT `authentik` -- see the header for why that
+        # substitution fails closed and silently.
+        - name: authentik-lan
+          namespace: authentik
+      services:
+        # Same namespace as this route, so no cross-namespace service reference is needed.
+        # The Service is manifest-endpoint.yaml; port 80 -> the pod's `manifest` port (8082).
+        - name: catalyst-nav-manifest
+          port: 80

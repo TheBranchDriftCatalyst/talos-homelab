@@ -1,22 +1,21 @@
 ---
 # The per-identity manifest endpoint's Service. Phase 3 of the catalyst-nav strangler fig.
 #
-# THERE IS NO IngressRoute HERE, DELIBERATELY. Nothing routes to this Service yet; switching
-# catalyst-nav.js over to it is phase 4, and that phase has to get three things right that this
-# one deliberately does not attempt:
+# THE ROUTE IS NOW manifest-route.yaml, NOT ABSENT. This file carried the standing note that
+# nothing routed to this Service and that phase 4 had three things to get right. Phase 4 has
+# been written: manifest-route.yaml is the IngressRoute, and its header answers all three
+# point by point (no catalyst-asset-cache and no other catalyst-* middleware; forward-auth +
+# lan-only, with `authentik-lan` rather than the `authentik` this note used to name, because
+# that name went stale; websecure only). The client half -- the `credentials: 'omit'` that
+# would have anonymised every caller -- is addressed in catalyst-nav.js, which now selects
+# between the static file and this endpoint per app.
 #
-#   1. The route must NOT reference `catalyst-asset-cache` (traefik/themepark). That middleware
-#      stamps `public, max-age=300, stale-while-revalidate=3600` via customResponseHeaders,
-#      which OVERWRITE the backend's headers — one user's nav served to the next for five
-#      minutes. The handler's path is outside /catalyst/ precisely so the prefix cannot attach
-#      it by accident, but a hand-written route could still reference it by name.
-#   2. The route must carry the `authentik` forward-auth middleware
-#      (infrastructure/base/authentik/middleware.yaml), which is what makes X-authentik-groups
-#      trustworthy in the first place — and `lan-only`, matching the asset route.
-#   3. catalyst-nav.js currently fetches with `credentials: 'omit'` and no `cache: 'no-store'`,
-#      both correct for a static public file and both wrong for this one: without the session
-#      cookie the forward-auth outpost has no identity to resolve, so every user would be
-#      served the public subset. Phase 4 changes that fetch.
+# STILL INERT UNTIL TWO SEPARATE THINGS HAPPEN, and neither is in this directory:
+#   - the Flux Kustomization at clusters/catalyst-cluster/catalyst-nav.yaml must be applied,
+#     which is what makes any of this tree exist in the cluster at all; and
+#   - an app's own catalyst-inject-<app> middleware must gain data-nav-manifest="identity".
+#     Until one does, every app still reads the static file and this endpoint is unused even
+#     once it is routable. See docs/02-architecture/catalyst-nav-cutover.md.
 #
 # A SEPARATE Service from catalyst-nav-webhook rather than a second port on it: the webhook
 # Service is the clientConfig target of a failurePolicy: Fail ValidatingWebhookConfiguration,

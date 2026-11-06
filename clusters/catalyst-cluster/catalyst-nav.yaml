@@ -1,0 +1,85 @@
+---
+# THE CATALYST NAV OPERATOR — and the first phase of this migration that is not inert.
+#
+# Phases 1-3 and 5 all landed with infrastructure/base/catalyst-nav/ deliberately unreferenced
+# by anything under clusters/catalyst-cluster/, so none of it had ever met the live apiserver.
+# THIS FILE IS WHAT ENDS THAT. Applying it creates, for real: the NavGroup/NavEntry CRDs, the
+# 8 NavGroups in taxonomy.yaml, a namespace, RBAC, the operator Deployment, two Services, a
+# cert-manager Certificate, 6 CiliumNetworkPolicies, a ValidatingWebhookConfiguration, and the
+# phase-4 IngressRoute.
+#
+# ── READ THIS BEFORE APPLYING: TWO THINGS ARE TRUE AT ONCE ───────────────────────────────────
+#
+#  1. THE OPERATOR IMAGE DOES NOT EXIST YET. deployment.yaml pins
+#     registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0 and says so in its own
+#     header; no CI in this repo builds images. Until it is built and pushed the Deployment
+#     sits in ImagePullBackOff, which means this Kustomization reports NotReady (see the
+#     healthChecks note below) and the manifest endpoint answers nothing. Build and push
+#     FIRST, then apply this.
+#
+#  2. THE NavEntry WEBHOOK IS failurePolicy: Fail. Once applied, CREATE/UPDATE on
+#     nav.catalyst.io NavEntry objects is refused cluster-wide while the operator pod is not
+#     Ready. Scoped precisely: webhook.yaml rules name `naventries` only, so the 8 NavGroups
+#     this very Kustomization applies are NOT intercepted and cannot deadlock their own
+#     apply. Nothing in the cluster creates NavEntries today, so today's blast radius is
+#     zero -- but it stops being zero the moment something does, and an operator that cannot
+#     pull its image is exactly when that bites.
+#
+# Neither of these makes the bar change for any user. The nav client still reads the static
+# manifest on every app until an app's catalyst-inject-<app> middleware opts in; see
+# docs/02-architecture/catalyst-nav-cutover.md.
+#
+# ── NO postBuild.substituteFrom, AND THAT IS LOAD-BEARING ────────────────────────────────────
+#
+# Same reason catalyst-injected-applet.yaml gives, and it applies harder here. This tree is
+# full of literal `$`: anchored regex `pattern:` values in navgroup-crd.yaml and
+# naventry-crd.yaml, and `HostRegexp(`^[a-z0-9-]+\.talos00$`)` in the new manifest-route.yaml.
+# Flux's envsubst is strict and a single mis-substitution fails the WHOLE Kustomization rather
+# than one resource. Nothing in this directory is cluster-templated, so the safe thing is to
+# not run the substitution at all. Do not add it to "be consistent" with its neighbours.
+#
+# ── wait: false + EXPLICIT healthChecks ──────────────────────────────────────────────────────
+#
+# `wait: true` would IGNORE spec.healthChecks and instead block on every applied object
+# reaching kstatus Current -- the failure this cluster has already eaten three times
+# (gaming.yaml's Halted VM, bt-radar's bluetooth-less agent, teak-talos-dev's Certificate and
+# CronJob). Here it would block on the cert-manager Certificate and on 6
+# CiliumNetworkPolicies, burning the full timeout per reconcile and pinning the Kustomization
+# to a stale revision.
+#
+# The healthCheck below WILL therefore report NotReady until the image from note 1 exists.
+# That is the intended signal and not a reason to delete it: a Kustomization that goes green
+# while its only workload cannot start is a vacuous green. Nothing dependsOn catalyst-nav, so
+# this readiness gates no other reconcile.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: catalyst-nav
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/catalyst-nav
+  prune: true
+  wait: false
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: catalyst-nav-operator
+      namespace: catalyst-nav
+  dependsOn:
+    # IngressRoute + Middleware CRDs for manifest-route.yaml. The route also REFERENCES
+    # middlewares owned by traefik (lan-only) and authentik (authentik-lan); those are
+    # resolved by Traefik at request time, not at apply time, so only the CRD ordering needs
+    # declaring here -- the same reason teak-talos-dev depends on traefik but not authentik.
+    - name: traefik
+    # selfsigned-issuer ClusterIssuer, which webhook.yaml's Certificate names in issuerRef.
+    - name: cert-manager-issuers
+    # CiliumNetworkPolicy CRD for operator/cilium-network-policy.yaml — the PRIMARY control
+    # on the trust of the X-authentik-* headers, per navserve's threat model, so it must not
+    # be the thing that is missing when the endpoint first answers.
+    - name: cilium

@@ -3,9 +3,11 @@
 # claims and publishes the nav model into a ConfigMap. Also serves the NavEntry validating
 # webhook.
 #
-# NOT YET DEPLOYED. No Flux Kustomization points at infrastructure/base/catalyst-nav — see
-# that directory's kustomization.yaml. Wiring it is a later phase; the image below does not
-# exist in the registry yet either (see Dockerfile for the build command).
+# NOT YET DEPLOYED, but the wiring now exists: clusters/catalyst-cluster/catalyst-nav.yaml
+# (phase 4) points at infrastructure/base/catalyst-nav. What still gates this Deployment is
+# the IMAGE — the tag below does not exist in the registry (see Dockerfile for the build
+# command). Apply that Kustomization before the image is pushed and this lands in
+# ImagePullBackOff, which is why its header says to build first.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -75,7 +77,7 @@ spec:
           # builds images (verified: no workflow, no Taskfile task, no lefthook hook does).
           # Pin a digest once it is pushed — `:latest` on a stale tag is an upgrade trigger
           # that fast-forwards across every release at once.
-          image: registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0
+          image: registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0@sha256:c63e5ee8069bdfbebbc4a1e11e6a89c9438874f75ffc91e1d6d08d460fe15958
           imagePullPolicy: IfNotPresent
           env:
             # The operator writes its ConfigMap here and scopes its ConfigMap informer to
