@@ -26,7 +26,23 @@ clusterName: catalyst-cluster
 # talos00. Deliberately the endpoint AND the last node to ever be touched.
 endpoint: https://192.168.1.54:6443
 
-talosVersion: v1.13.9
+talosVersion: v1.13.9 # DELIBERATE PIN, NOT DRIFT. The fleet runs v1.14.0 (upgraded separately
+                      # with `talosctl upgrade`), and this field looks like it has fallen behind.
+                      # It has not: talhelper v3.1.17 CANNOT GENERATE for v1.14.x with this config.
+                      # Setting either v1.14.0 or v1.14.5 makes `talhelper genconfig` fail with 8
+                      # errors -- ".machine.features.hostDNS is already set in v1alpha1 config",
+                      # the same for apiServer/controllerManager/scheduler/admission plugins, and
+                      # ".machine.cluster.proxy can't be used with KubeProxyConfig document" --
+                      # because the newer schema splits those into separate documents while this
+                      # config still carries them inline. Verified 2026-11-06.
+                      #
+                      # This field only drives the generated INSTALLER IMAGE reference; it does not
+                      # change the applied machine config (apply-config --dry-run reports
+                      # "No changes" either way), so the pin is harmless.
+                      #
+                      # To actually move Talos: upgrade talhelper first, re-flatten the inline
+                      # apiServer/controllerManager/scheduler/proxy blocks into the new documents,
+                      # THEN bump here, THEN `talosctl upgrade` per node (reboots). Not a one-liner.
 kubernetesVersion: v1.36.4
 
 # ⚠️ THE API SERVER'S CERTIFICATE SANs. Live on all three control planes; talhelper does NOT
