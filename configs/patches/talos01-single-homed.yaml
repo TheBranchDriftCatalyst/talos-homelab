@@ -1,0 +1,32 @@
+# talos01 ONLY. Ignore the second NIC entirely.
+#
+# WHY THIS EXISTS — found 2026-11-06 during the pre-move shutdown rehearsal (TALOS-fxo2).
+#
+# talos01 is the only node in the fleet with two NICs cabled to the SAME subnet:
+#   enp3s0  e8:ff:1e:d4:d6:79  192.168.1.177  <- the node's InternalIP, the one we want
+#   enp2s0  e8:ff:1e:d4:d6:7a  192.168.1.178  <- ignored by this patch
+#
+# Talos defaults to DHCP on every link, so both took leases. Cilium auto-detects its
+# devices and bound BOTH, so overlay traffic could egress .178 while peers expect .177
+# and the return path was dropped. Result after a cold boot: cilium-health reported
+# "talos01 Node: 1/1, Endpoints: 0/1" — host routing fine, pod-to-pod dead.
+#
+# The blast radius was the whole cluster, not this node. Both CoreDNS replicas sit on
+# talos00, so every pod on talos01 lost DNS; flux source-controller runs here, could not
+# resolve github.com, and 76 of 78 Kustomizations went not-Ready. Every symptom pointed
+# at a different layer than the fault.
+#
+# SELECTED BY MAC, NOT BY NAME, ON PURPOSE. Kernel interface names are not stable across
+# reboots, and a rename is the most likely reason this surfaced on this boot and not
+# earlier. A name-based selector would be fragile in exactly the way that caused the
+# outage. hardwareAddr pins the physical port no matter what the kernel calls it.
+#
+# If a second subnet is ever genuinely wanted on this node, give enp2s0 an explicit
+# static address on a DIFFERENT subnet and pin Cilium's devices — do not just drop this
+# patch, or the same asymmetric-routing outage returns on the next reboot.
+machine:
+  network:
+    interfaces:
+      - deviceSelector:
+          hardwareAddr: "e8:ff:1e:d4:d6:7a"
+        ignore: true
