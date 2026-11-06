@@ -1,0 +1,24 @@
+---
+# Scheduling tiers. Must land EARLY and stay — a workload referencing a
+# PriorityClass that does not exist is REJECTED at admission, so these have to
+# exist before anything is labelled with them. That is also why prune is
+# disabled: pruning these out from under live workloads would make their pods
+# unschedulable rather than merely unprioritised.
+#
+# Cluster-scoped objects only, no namespace dependency, so this can run first
+# alongside namespaces. See infrastructure/base/priority-classes/ for the
+# incident that produced the tiers (TALOS-fxo2).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: priority-classes
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/priority-classes
+  prune: false # see above — pruning a referenced class breaks scheduling
+  wait: true
+  timeout: 2m

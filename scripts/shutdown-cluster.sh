@@ -542,13 +542,33 @@ if $HAVE_KUBECTL; then
   for c in "${CPS[@]}"; do
     name="${c%:*}"
     if $DRY_RUN; then
-      printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --timeout=%s\n" \
+      printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --disable-eviction --timeout=%s\n" \
         "$name" "${DRAIN_TIMEOUT:-120s}"
-    elif kubectl drain "$name" --ignore-daemonsets --delete-emptydir-data --force \
+      # --disable-eviction makes drain DELETE pods rather than go through the
+      # eviction API, bypassing PodDisruptionBudgets.
+      #
+      # THIS IS NOT A SHORTCUT — it is the only thing that CAN work here, and
+      # omitting it caused real data corruption on 2026-11-06. A PDB asks "will
+      # enough replicas remain?"; in a whole-cluster shutdown the answer is
+      # permanently no, so eviction can NEVER drain a PDB-guarded pod. 32 pods
+      # across talos01 and talos03 failed to evict for exactly that reason —
+      # mostly CNPG Postgres instances, plus crowdsec-lapi, kyverno-admission
+      # and virt-api.
+      #
+      # Those pods then died later inside `talosctl shutdown`, as kubelet stopped
+      # with the API server already gone — the least graceful path available. zot
+      # came back with a TRUNCATED index.json ("unexpected end of JSON input")
+      # and needed hand repair.
+      #
+      # Deleting still sends SIGTERM and still honours the full
+      # terminationGracePeriodSeconds, and it happens HERE while the API server
+      # is up and quorum holds — strictly gentler than what respecting the PDBs
+      # actually produced.
+    elif kubectl drain "$name" --ignore-daemonsets --delete-emptydir-data --force --disable-eviction \
       --timeout="${DRAIN_TIMEOUT:-120s}" > "$LOG_DIR/drain-$name.log" 2>&1; then
       ok "drained ${BOLD}$name${NC}"
     else
-      warn "drain incomplete for $name (likely a PDB; see $LOG_DIR/drain-$name.log) — continuing"
+      warn "drain incomplete for $name (see $LOG_DIR/drain-$name.log) — continuing"
     fi
   done
 else

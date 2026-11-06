@@ -1,0 +1,80 @@
+---
+# Scheduling tiers for graceful cold-boot and reboot recovery.
+#
+# WHY THIS EXISTS — the 2026-11-06 cold-boot cascade (TALOS-fxo2).
+#
+# Before this, 362 of 414 pods had NO priorityClassName, so everything sat at
+# priority 0 and competed equally. The scheduler had no way to know that a
+# database outranks a backup job. What happened:
+#
+#   59 kopia backup Jobs took the CPU/memory on a node
+#     -> authentik-postgres-2 could not schedule there (its local-path PV pins
+#        it to THAT node, so it cannot go elsewhere)
+#       -> authentik-server 0/1, authentik-worker CrashLoopBackOff
+#         -> zot PANICKED on startup: "failed to initialize new relying party
+#            oidc" (it hard-exits if its OIDC provider is unreachable)
+#           -> 11 apps stuck ImagePullBackOff, because their images live in zot
+#
+# One backup job beat one database to a node and ~15 apps stayed down. The fix
+# is to make that race impossible rather than to clean up after it.
+#
+# ORDERING FOLLOWS THE REAL DEPENDENCY CHAIN, bottom-up:
+#   data  -> auth -> ingress -> platform -> apps -> batch
+# because auth needs its database, and apps need both auth and the registry.
+#
+# All values sit BELOW the built-in system-cluster-critical (2000000000) so core
+# control-plane components always outrank us. Existing classes for reference:
+#   system-node-critical       2000001000  (built-in)
+#   system-cluster-critical    2000000000  (built-in)
+#   kubevirt-cluster-critical  1000000000
+#   pihole-critical             900000000  (LAN DNS)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-data
+value: 800000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Stateful roots: CNPG Postgres, the Zot registry. Nothing above them in the dependency chain can start without these, and local-path PVs pin them to one node so they cannot route around a full node."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-auth
+value: 700000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Authentik (server, worker, outposts). Below platform-data because it needs its database first; above everything that forward-auths through it."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-ingress
+value: 600000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Traefik and cert-manager. Without ingress nothing is reachable even when healthy, so it must not lose a scheduling race to an application."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform
+value: 500000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Platform services that applications do not strictly block on: monitoring, Kyverno, Flux, ArgoCD, ESO."
+---
+# Applications stay at the implicit default (0) ON PURPOSE. Giving them an
+# explicit class would mean every new app needs one, and forgetting it would put
+# it BELOW its peers rather than alongside them — a silent regression. Default-0
+# fails safe.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: batch-background
+value: -10000
+globalDefault: false
+# Never preempts: a maintenance job must not evict a running workload to start.
+# It is still freely preemptible BY anything above it, which is the whole point.
+preemptionPolicy: Never
+description: "Deferrable maintenance: kopia backup jobs, reapers, wedge-busters, cleanup CronJobs. NEGATIVE so they yield to every real workload, including plain applications. These caused the 2026-11-06 cascade by winning a node ahead of a database."
