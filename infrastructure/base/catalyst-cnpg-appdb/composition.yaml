@@ -51,6 +51,22 @@ spec:
                         catalyst.io/composition: catalyst-cnpg-appdb
                         catalyst.io/managed-by: crossplane
                     spec:
+                      # Postgres outranks everything that depends on it, and a CNPG instance
+                      # CANNOT route around a full node: its PVC is local-path, so the PV's
+                      # nodeAffinity pins the pod to one specific machine.
+                      #
+                      # On the 2026-11-06 cold boot that was fatal. 59 Velero kopia maintenance
+                      # Jobs held the CPU on talos06 (15595m of 15600m requested -- 5 millicores
+                      # free) and authentik-postgres-2, the PRIMARY, sat Pending for 45 minutes
+                      # with nowhere else to go. authentik went down; zot then panicked because
+                      # it hard-exits without its OIDC provider; 11 apps could not pull images
+                      # that live in zot. One backup job beating one database to a node cost
+                      # about 15 apps.
+                      #
+                      # platform-data (800000000) lets a Pending instance PREEMPT lower-priority
+                      # pods on its pinned node, which is the only lever that helps when the pod
+                      # cannot be moved. See infrastructure/base/priority-classes/. TALOS-fxo2.
+                      priorityClassName: platform-data
                       # Velero must stay off CNPG pods and PVCs — CNPG owns its own
                       # backups via barman WAL + ScheduledBackup, and a Velero snapshot of
                       # a live PGDATA is worse than useless. This is the label half of the

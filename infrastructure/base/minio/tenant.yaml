@@ -150,6 +150,27 @@ spec:
   # Pool configuration - single server for homelab
   pools:
     - name: pool-0
+      # PINNED TO talos06 OUT OF NECESSITY, NOT PREFERENCE. TALOS-fxo2.
+      #
+      # The image this Tenant requests NO LONGER EXISTS UPSTREAM. Verified
+      # 2026-11-06: quay.io/minio/minio returns 401 UNAUTHORIZED for this tag and
+      # its API reports ZERO active tags for the repo; a real in-cluster pull of
+      # docker.io/minio/minio at the same tag also fails to resolve. The only copy
+      # reachable from this cluster is the one already in talos06's containerd
+      # cache (`talosctl -n 192.168.1.19 image ls` -- and it is on that node ONLY).
+      #
+      # MinIO therefore cannot be scheduled anywhere else. Before the cold boot it
+      # ran wherever its cache happened to be; the reboot moved it to a node with no
+      # cache and it went ImagePullBackOff, which also broke Velero (its kopia
+      # maintenance jobs failed and regrew to 55, eating the capacity that starved
+      # authentik-postgres).
+      #
+      # THIS PIN IS A STAY OF EXECUTION, NOT A FIX. If talos06's cache is pruned or
+      # that node is rebuilt, MinIO is unrecoverable from upstream -- and MinIO backs
+      # Velero, the CNPG barman WAL archive, and Loki/Mimir object storage. Mirror
+      # the cached image into zot and repoint this, then remove the nodeSelector.
+      nodeSelector:
+        kubernetes.io/hostname: talos06
       servers: 1
       volumesPerServer: 1
       volumeClaimTemplate:
