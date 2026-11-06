@@ -9,4 +9,13 @@ record; the index carries what that record _taught_.
 
 ---
 
-_No archived sessions yet. The index has not yet exceeded its retention window._
+## Archived sessions
+
+### 2026-09-17/18 (overnight) — Flake + direnv migration, root cleanup
+
+**Filed:** `TALOS-pmbi`, `TALOS-ewlf`, `TALOS-p4qu`, `TALOS-pmnc`, `TALOS-90pl`
+**Closed:** `TALOS-hdw8`, `TALOS-9vtw`
+
+Converted the repo to `use flake` + direnv; consolidated devx; moved Taskfiles under `dev/`;
+1Password secret materialisation with biometric caching. Added the cowrie replay-bot
+suppression scenario (`homelab/cowrie-replay-drop`), still in simulation.

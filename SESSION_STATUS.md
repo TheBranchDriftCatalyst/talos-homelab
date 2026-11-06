@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-20
-**Pick up here:** `TALOS-tvaw` (six credentials are known-exposed and unrotated, one of them `minio123` in a PUBLIC repo) · **Deadline item:** none dated, but every day `TALOS-tvaw` stays open is a day those credentials stay valid
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-11-06
+**Pick up here:** `TALOS-ozfe` (relocating the cluster — and `TALOS-ozfe.1` is a P0: `scripts/shutdown-cluster.sh` powers off 3 of 5 nodes and prints success) · **Deadline item:** the physical move itself; `TALOS-tvaw` remains the standing security debt, open since 2026-10-16
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -38,6 +38,15 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:next -->
 
 ## Now / next
+
+### Time-boxed — `TALOS-ozfe`, shut the cluster down and bring it back
+
+|                |                                                                                                                                                                                                                             |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Do not use the script | `TALOS-ozfe.1` (P0). `scripts/shutdown-cluster.sh` was written for ONE control plane: `CP_NAME=$name` overwrites rather than appends, so with three it powers off two workers and one CP, then prints "Safe to swap the UPS" while two control planes are still running. Its kubectl-less fallback is worse — it force-kills two CPs in parallel. |
+| Order that works | Workers plain `shutdown` (Talos drains); then ONE CP; then **both remaining CP drains before either shutdown** — after the second CP stops, etcd is 1-of-3, the API server stops accepting writes, and `kubectl drain` on the last one fails exactly then. Synology last off, first on. |
+| On the way back | Reverse. Synology first (NFS live **and** VMM starts the talos00 guest — it is a VM on the NAS, not a physical node), then CPs until etcd shows 3, then workers, then **uncordon all five** — drain state lives in etcd and survives the reboot. Never `talosctl bootstrap`. |
+| Network | Unchanged subnet/gateway, reservations intact, so the `validSubnets`/`advertisedSubnets`/CoreDNS pins all stay valid. |
 
 ### Active — `TALOS-tvaw`, rotate every exposed credential
 
@@ -103,6 +112,15 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ### Explicitly not next
 
+- **Do not flip `catalyst-inject-nav` to the per-identity manifest.** It is shared by 47 hosts
+  and 18 of them cannot authenticate (no forward-auth, bare `authentik`, or plain HTTP). The
+  endpoint answers 400 there and the bar does not render at all. Cutover is per-app, on an
+  app's own injector, and only when it has one, is on `authentik-lan`, and is on websecure.
+- **Do not retire the public manifest path** (`TALOS-ge56.4`). The operator replaced the
+  sidecar as its _producer_, but ~50 apps still read it and most of them structurally cannot
+  move. Phase 6 retires the sidecar, not the path — and its audit must run against a live
+  capture, not the committed corpus (36/47 hosts vs 53/72 live).
+
 |                                                        |                                                                                                                                                                                 |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scale-to-zero / `TALOS-5drv.5`                         | Deferred **on purpose** until a cold boot is boring, and its old design is known broken (`TALOS-x1sb`). It is also blocked behind the relay Pod — there is nothing for a scaler to target until a Pod exists. |
@@ -120,6 +138,42 @@ If you are here to do something else entirely, that is fine and probably correct
 ---
 
 <!-- closeout:sessions -->
+
+### 2026-11-05/06 — Nav v2: a CRD + operator replaces the Python sidecar, and two bugs that looked identical
+
+**Commits:** 27 · **Scope:** `infrastructure/base/catalyst-nav/`, `infrastructure/base/themepark/`, `infrastructure/base/catalyst-websecure-ingress/`, `infrastructure/base/argocd/applications/`, `clusters/catalyst-cluster/`
+
+**Filed:** `TALOS-ozfe` (+5), `TALOS-ge56` (+5)
+**Closed:** none
+**Carried:** `TALOS-ozfe.1` — `scripts/shutdown-cluster.sh` still powers off 3 of 5 nodes and reports success; do not use it for a real shutdown until fixed
+
+The nav bar's links were dead to left-click while right-click "open in new window" worked.
+That turned out to be **two independent bugs with one symptom**, and fixing the first did not
+help. The auto-hide bar slid out from under a held pointer — a 1px jitter between mousedown
+and mouseup moved it, so mouseup landed elsewhere and no `click` was ever synthesised. The
+second was the hrefs: `//host/` is the same URL to a browser but reads as an _internal path_
+to a host app's SPA router, so Grafana's `interceptLinkClicks` called `pushState` across
+origins and threw after already calling `preventDefault()`.
+
+Built `nav.catalyst.io/v1alpha1` (NavGroup/NavEntry) and a Go operator that watches
+IngressRoutes and claims, reports status, and refuses a NavEntry whose `navGroupRef` names no
+NavGroup — the typo-forks-a-group failure the CRDs exist to prevent. Then deleted the
+duplicate: `build_nav.py` (374 lines), `discover.sh`, the `nav-discovery` sidecar, its RBAC
+and `test_build_nav.py`. The operator is now sole producer of both the public manifest and a
+per-identity one filtered by Authentik groups. Gate: public manifest byte-identical before and
+after, 4891 B, verified live.
+
+**What it cost, and what was found rather than built.** Standing up the operator took four
+failures in a row that every gate passed — an unregistered Kustomization (the cluster dir is
+_not_ globbed), a missing pull secret, an arm64 image on an amd64 fleet, and a 0400 cert the
+runtime user could not read. Then the excision caused ~4 minutes of 502 on every themed host,
+because it routed to a port that only existed in code the pinned image predated — and the
+static file it would have fallen back to had just been deleted.
+
+Separately: six ArgoCD apps had been in a **12-day revert loop**, Kyverno re-adding a
+`lan-only` middleware that selfHeal kept stripping; and `task nav:test:envtest` had been
+exiting 0 while skipping every envtest spec, so phase 2's webhook proof had never actually
+run. Both found by reading evidence rather than trusting a green signal.
 
 ## Sessions
 
@@ -486,14 +540,6 @@ blind for most of the day (gotcha #1).
 two worst self-inflicted outages were _optional tidying nothing asked for_, done mid-campaign
 on the enforcement path.
 
-### 2026-09-17/18 (overnight) — Flake + direnv migration, root cleanup
-
-**Filed:** `TALOS-pmbi`, `TALOS-ewlf`, `TALOS-p4qu`, `TALOS-pmnc`, `TALOS-90pl`
-**Closed:** `TALOS-hdw8`, `TALOS-9vtw`
-
-Converted the repo to `use flake` + direnv; consolidated devx; moved Taskfiles under `dev/`;
-1Password secret materialisation with biometric caching. Added the cowrie replay-bot
-suppression scenario (`homelab/cowrie-replay-drop`), still in simulation.
 <!-- /closeout:sessions -->
 
 ---
@@ -666,6 +712,33 @@ worth keeping is distilled up into this list first. Fuller detail lives in
     with "too many colons in address" — it wants `host:port`, not a URL — logs the error at
     ERROR level and exits 0 anyway. Grep the output for `level=ERROR` before believing a run
     happened; this one was reported as finished when it had not run at all.
+
+48. **`clusters/catalyst-cluster/` is NOT globbed.** The root kustomization at
+    `clusters/catalyst-cluster/flux-system/kustomization.yaml` lists all 78 siblings
+    explicitly as `../<name>.yaml`. A Kustomization file dropped in without a line there is
+    inert _and silent_ — no error, no event, and `flux get kustomizations` never lists it. It
+    looks deployed.
+49. **A digest-pinned image means code changes are inert until you rebuild.** Pinning the
+    digest is correct — a mutable tag is an upgrade trigger, not a version — but the manifests
+    and the binary then version independently. Shipping a route to a port that only exists in
+    unbuilt code gives 502 with a correct Service, CNP, endpoint and containerPort. Rebuild
+    and repin whenever `internal/` or `cmd/` changes, and always `--platform linux/amd64`:
+    every node is amd64, and an arm64 image pulls perfectly then dies with `exec format error`
+    _after_ the pull, so it reads as an application fault.
+50. **A protocol-relative href is not the same URL to an SPA router.** `//host/` reads as an
+    internal path to anything that decides "external" by looking for a scheme, so Grafana's
+    `interceptLinkClicks` called `history.pushState` across origins — which throws, after
+    `preventDefault()` has already run. Symptom: left-click dead, right-click
+    "open in new window" fine. Emit absolute `https://`.
+51. **A Secret volume at `defaultMode: 0400` is unreadable by a non-root `runAsUser`.** The
+    files are owned by root, so owner-only read locks the process out of its own TLS cert. It
+    surfaces as a wall of informer-sync timeouts with the real cause on the _last_ line. Needs
+    `fsGroup` plus a group-readable mode, not a wider mode alone.
+52. **`go run <tool-import-path>` for a tool that is not a module dependency expands to
+    nothing.** `setup-envtest` invoked by bare import path resolved to empty,
+    `KUBEBUILDER_ASSETS=""` skipped every envtest spec, and the task still exited 0 — so a
+    webhook "proven against a real apiserver" had never run. Declare it in `go.mod` as a
+    `tool`, and check a suite reports PASS counts rather than SKIPs before believing it.
 
 <!-- /closeout:gotchas -->
 
