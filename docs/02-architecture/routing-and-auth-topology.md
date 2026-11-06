@@ -124,9 +124,25 @@ The `--entrypoints.<ep>.http.middlewares=` CLI flags are authoritative (override
   via `PathPrefix(/catalyst/) && HostRegexp(^[a-z0-9-]+\.talos00$)` at priority 10000, gated by the
   two-control pattern (`HostRegexp` + `lan-only` — each closes the other's bypass; follows a
   confirmed past disclosure of `catalyst-nav.json` via the public forge host).
-- **`server/nav/build_nav.py`** derives the nav bar from IngressRoute annotations
-  (`gethomepage.dev/enabled` gate; `name`/`group`/`weight`; middleware-name classification for
-  injected/themed). This is the prior art the `system-graph` epic reuses.
+- **Manifest producer:** the **catalyst-nav operator** (`infrastructure/base/catalyst-nav/`)
+  derives the nav bar from IngressRoute annotations (`gethomepage.dev/enabled` gate;
+  `name`/`group`/`weight`; middleware-name classification for injected/themed). This is the
+  prior art the `system-graph` epic reuses.
+  - It replaced `server/nav/build_nav.py`, a Python sidecar beside the theme server that ran the
+    same derivation on a 300s loop and wrote a static file. Deleted: two implementations of one
+    derivation needed a manual byte-parity task to stay honest. That task survives the deletion
+    — `task nav:parity` diffs against the script's frozen output.
+  - **Two endpoints, and the difference is the thing to know.**
+    `/catalyst/resources/catalyst-nav.json` is **public, unfiltered and cacheable** — the exact
+    path and bytes the sidecar served, now routed to the operator at priority **10001** so it
+    wins over the asset route's 10000. `/catalyst-nav/v1/manifest.json` is **per-identity**,
+    filtered through `NavGroup` `spec.visibility`, and requires forward-auth.
+  - **21 of 58 themed hosts can only ever use the public path** — no forward-auth (grafana,
+    plex, jellyfin, komga, kavita, minio, homeassistant, linkwarden, argocd…), bare `authentik`
+    instead of `authentik-lan`, or HTTP-only (a `Secure` session cookie is never sent). On
+    grafana the identity endpoint returns **400**. An app opts in per-app with
+    `data-nav-manifest="identity"` on its OWN injector; never on the shared `catalyst-inject-nav`,
+    which 47 hosts share and 18 of those are ineligible.
 
 ### DNS — `infrastructure/base/pihole/statefulset.yaml`
 

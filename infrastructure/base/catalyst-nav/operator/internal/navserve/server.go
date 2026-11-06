@@ -43,13 +43,23 @@
 //     4's job and a half-wired secret would silently anonymise every real user.
 //
 //  3. FAIL-CLOSED DEFAULT (always on, and the reason a spoof is not a catastrophe). There is
-//     no code path that serves the UNFILTERED manifest. Every response is filtered through an
-//     identity, and the identity for a request with no usable headers is
+//     no code path IN THIS HANDLER that serves the UNFILTERED manifest. Every response is
+//     filtered through an identity, and the identity for a request with no usable headers is
 //     visibility.Anonymous() — a member of nothing, which sees only entries and groups that
 //     declared no visibility at all. A spoofer therefore cannot gain by OMITTING headers, and
 //     the most they gain by ADDING them is the restricted sections — never more than the
-//     static file already hands to every LAN browser today. The exposure strictly shrinks
+//     public manifest already hands to every LAN browser today. The exposure strictly shrinks
 //     relative to the thing being replaced.
+//
+// THE UNFILTERED MANIFEST IS SERVED, BUT NOT FROM HERE. public.go answers the public path on
+// its own listener (port 8083, its own Service, its own route with NO forward-auth) because
+// the 21 themed hosts without forward-auth depend on it. An earlier revision of this comment
+// said flatly that "there is no code path that serves the UNFILTERED manifest"; that was true
+// of the whole operator then and is true only of THIS HANDLER now. The boundary to reason
+// about is therefore per-listener: the identity endpoint has no unfiltered path, the public
+// endpoint has no filtered one, and the public endpoint reads no request headers at all so
+// there is nothing on it to spoof. See public.go for why its exposure is unchanged from the
+// static file it replaced.
 //
 // WHAT IS DELIBERATELY NOT DONE. X-authentik-jwt is a signed assertion and verifying it
 // against Authentik's JWKS would give a cryptographic trust root instead of a network one.

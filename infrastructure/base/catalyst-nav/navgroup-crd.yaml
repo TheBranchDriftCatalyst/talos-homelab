@@ -1,8 +1,9 @@
 ---
 # NavGroup — the navbar taxonomy, as an object instead of a free-text field.
 #
-# WHY THIS EXISTS. Today's nav (infrastructure/base/themepark/server/nav/) derives its groups
-# from gethomepage.dev/group, a bare string stamped on each IngressRoute. A bare string has no
+# WHY THIS EXISTS. The nav derives its groups from gethomepage.dev/group, a bare string
+# stamped on each IngressRoute — originally in the themepark build_nav.py sidecar (deleted),
+# now in the catalyst-nav operator, which inherited the behaviour unchanged. A bare string has no
 # spellchecker and no single source of truth, so it forks: the live cluster carries BOTH
 # "Monitoring" and "Observability" as separate dropdown groups today, each with its own apps,
 # because two different IngressRoutes were annotated six months apart by two different sessions
@@ -16,12 +17,24 @@
 # the same group) becomes "two objects with different names", which is visible in
 # `kubectl get navgroups` as two rows instead of invisible as two strings nobody diffed.
 #
-# This is phase 1 of a strangler-fig migration (see infrastructure/base/catalyst-nav/README
-# intent in the kustomization comment). THIS CRD IS NOT WIRED TO ANYTHING YET. The existing
-# discover.sh + build_nav.py sidecar keeps deriving catalyst-nav.json from annotations exactly
-# as before; nothing here changes what ships to the browser. Phase 2 teaches that pipeline to
-# resolve gethomepage.dev/group against these objects instead of taking the string verbatim —
-# that is the point at which a typo in an annotation starts getting caught.
+# THIS CRD IS WIRED NOW, and the note that used to stand here — "NOT WIRED TO ANYTHING YET;
+# the existing discover.sh + build_nav.py sidecar keeps deriving catalyst-nav.json from
+# annotations exactly as before" — is obsolete: that sidecar is deleted and the catalyst-nav
+# operator is the sole producer. What these objects actually do today:
+#
+#   * the operator's Resolve binds each manifest group to a NavGroup by metadata.name OR by
+#     a case-insensitive spec.title match, and reports a group that matched nothing on
+#     status.conditions (Degraded/UnresolvedGroupNames). A typo in an annotation IS caught.
+#   * spec.visibility is ENFORCED, but only on the per-identity endpoint
+#     (/catalyst-nav/v1/manifest.json). The public manifest is deliberately unfiltered, so a
+#     NavGroup's visibility does not hide anything from an app that reads the static path.
+#
+# CONSEQUENCE WORTH KNOWING: a manifest group whose free-text gethomepage.dev/group matches no
+# NavGroup resolves to nothing and is therefore visible to everyone — visibility cannot be
+# declared for a group that does not resolve. 7 of the 12 live groups are in that state today
+# (Databases, Analytics, Apps, Audiobooks, Book Automation (Exp), Books & Comics, Monitoring);
+# giving them NavGroups is a taxonomy change that also has to move the CatalystWebSecureIngress
+# XRD's enum and its composition's title map, which the drift suite pins together.
 #
 # Scope is Cluster, not Namespaced: a navbar group is cluster-wide taxonomy, not a thing any one
 # app namespace owns. (Contrast NavEntry, below, which is namespaced because it belongs to

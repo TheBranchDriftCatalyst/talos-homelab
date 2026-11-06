@@ -104,6 +104,30 @@ spec:
 # Use this for any app that should be reachable from the bar but left looking
 # like itself — which is most of them, and all of media-experimental and
 # media-private.
+#
+# ── DO NOT ADD data-nav-manifest="identity" TO THIS MIDDLEWARE ───────────────
+# This is the SHARED injector: 47 hosts reference it, and 18 of those are
+# INELIGIBLE for the per-identity manifest endpoint — they have no forward-auth
+# at all (grafana, plex, jellyfin, komga, kavita, minio, homeassistant,
+# linkwarden, argocd…), or they are on bare `authentik` rather than
+# `authentik-lan`, or they are served over plain HTTP where the Secure session
+# cookie is never sent. Measured on grafana: the identity endpoint returns 400
+# there, catalyst-nav.js throws, retries three times, and renders NO BAR.
+#
+# So flipping this one object would break the bar on 18 apps to upgrade 29.
+# Cutting over is strictly PER-APP, on an app's OWN catalyst-inject-<app>
+# middleware, and only when all three hold: it has its own injector, it is on
+# authentik-lan, and it is on websecure. Eight apps qualify today and carry the
+# attribute (dbgate, sonarr, radarr, prowlarr, sabnzbd, qbittorrent, tautulli,
+# overseerr). An app sharing THIS middleware has to be given its own injector
+# first — which is a real change, not a formality, because a second
+# body-rewriting middleware chained behind the first is a silent no-op.
+#
+# Apps left here keep reading the public static manifest at
+# /catalyst/resources/catalyst-nav.json. That path is still served, and still
+# public, cacheable and unfiltered — only its PRODUCER changed, from the deleted
+# nav-discovery sidecar to the catalyst-nav operator. See
+# infrastructure/base/catalyst-nav/operator/public-manifest-route.yaml.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -216,10 +240,12 @@ spec:
         - regex: '</head>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-dbgate.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
-# Named `catalyst-dbgate`, not `catalyst-nav-dbgate`. build_nav.py classifies a
-# route as themed with `n.startswith("catalyst-") and "nav" not in n`, so a name
-# containing "nav" would dim this app's entry in the cross-app bar and promise a
-# destination that keeps its own look. See tests/nav/test_build_nav.py.
+# Named `catalyst-dbgate`, not `catalyst-nav-dbgate`. The nav operator classifies
+# a route as themed with `HasPrefix(n, "catalyst-") && !Contains(n, "nav")`, so a
+# name containing "nav" would dim this app's entry in the cross-app bar and
+# promise a destination that keeps its own look. Pinned by
+# infrastructure/base/catalyst-websecure-ingress/tests/test_nav_taxonomy_drift.py
+# (test_operator_classifier_is_unchanged).
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -264,10 +290,11 @@ spec:
         - regex: '</head>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-argocd.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
-# Named `catalyst-argocd`, not `catalyst-nav-argocd`. build_nav.py classifies a
-# route as themed with `n.startswith("catalyst-") and "nav" not in n`, so a name
-# containing "nav" would dim this app's entry in the cross-app bar and promise a
-# destination that keeps its own look. See tests/nav/test_build_nav.py.
+# Named `catalyst-argocd`, not `catalyst-nav-argocd`. The nav operator classifies a
+# route as themed with `HasPrefix(n, "catalyst-") && !Contains(n, "nav")`, so a
+# name containing "nav" would dim this app's entry in the cross-app bar and
+# promise a destination that keeps its own look. Pinned by
+# infrastructure/base/catalyst-websecure-ingress/tests/test_nav_taxonomy_drift.py.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -382,7 +409,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/overseerr/overseerr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
@@ -436,7 +466,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/prowlarr/prowlarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
@@ -515,7 +548,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/qbittorrent/qbittorrent-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
@@ -546,7 +582,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/radarr/radarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
@@ -573,7 +612,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sabnzbd/sabnzbd-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
@@ -600,7 +642,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sonarr/sonarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
@@ -627,7 +672,10 @@ spec:
       lastModified: true
       rewrites:
         - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+          # CUT OVER to the per-identity manifest. See catalyst-inject-dbgate
+          # above for the full reasoning; eligibility is own-injector +
+          # authentik-lan + websecure, all three verified live for this app.
+          replacement: '<head><script defer data-nav-manifest="identity" src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/tautulli/tautulli-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---

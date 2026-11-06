@@ -249,10 +249,11 @@ kubectl exec -n themepark deploy/themepark -c nav-discovery \
   -- cat /config/www/resources/catalyst-nav.json | python3 -m json.tool | less
 ```
 
-Capture that file before the change too, and diff the two. The sidecar rebuilds it every 300
-seconds, so wait out one refresh before concluding anything from it.
+Capture that file before the change too, and diff the two. The **catalyst-nav operator**
+rebuilds it on every reconcile now, not on a 300-second sidecar loop, so the new manifest is
+live as soon as the IngressRoute change is reconciled — there is no refresh to wait out.
 
-The three `nav.catalyst.io/*` keys are **inert** today: `build_nav.py` reads
+The three `nav.catalyst.io/*` keys are **inert** today: the operator's deriver reads
 `gethomepage.dev/` and `catalyst.nav/`, and `nav.catalyst.io/` is neither. So a correct
 migration changes *nothing* about what the browser receives. That is the point — the
 declaration lands on live routes and can be inspected long before anything depends on it.
@@ -332,7 +333,7 @@ Run before and after every migration commit:
 
 ```bash
 task nav:xrd-schema   # admission rejections + the three copies of the taxonomy agree
-task nav:parity       # the Go operator still reproduces build_nav.py byte for byte
+task nav:parity       # the Go operator still reproduces build_nav.py's FROZEN output, byte for byte
 ```
 
 `nav:parity` is the one that would catch a migration having changed what the nav renders. It

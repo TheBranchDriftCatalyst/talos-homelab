@@ -99,8 +99,16 @@ spec:
                   fieldPath: metadata.namespace
             - name: NAV_CONFIGMAP
               value: catalyst-nav-manifest
-            # Mirrors the sidecar's own env so the two produce comparable output during the
-            # migration. Changing either without the other makes the phase-6 diff meaningless.
+            # 'themed' (the default) lists only apps carrying the Catalyst theme, so every
+            # destination looks like the one you came from. 'all' would advertise every
+            # gethomepage.dev-enabled route.
+            #
+            # THIS IS NOW THE ONLY PLACE NAV_SCOPE IS SET. It used to be set here AND on the
+            # themepark nav-discovery sidecar, which ran the same derivation in Python, and
+            # the two had to be changed together or the parity diff was meaningless. The
+            # sidecar is deleted and this operator is the sole producer, so the value has one
+            # home. The parity gate still checks this exact spelling — `task nav:parity`
+            # looks up build_nav.py's recorded output for NAV_SCOPE=themed by name.
             - name: NAV_SCOPE
               value: themed
             # GOMEMLIMIT at ~80% of the memory limit, per this repo's convention for Go
@@ -120,10 +128,19 @@ spec:
               protocol: TCP
             # The per-identity manifest endpoint (phase 3). Reachable only from the traefik
             # namespace — see cilium-network-policy.yaml, which is the PRIMARY control on the
-            # trust of the X-authentik-* headers, not a nice-to-have. Nothing routes to it yet;
-            # manifest-endpoint.yaml explains what phase 4 has to get right.
+            # trust of the X-authentik-* headers, not a nice-to-have. Routed by
+            # manifest-route.yaml; reached only by an app whose injector opts in with
+            # data-nav-manifest="identity".
             - name: manifest
               containerPort: 8082
+              protocol: TCP
+            # The PUBLIC manifest endpoint — unfiltered, cacheable, reads no request headers.
+            # This is what replaced the deleted build_nav.py sidecar as the producer of
+            # /catalyst/resources/catalyst-nav.json, so unlike the port above it is on the hot
+            # path for every themed pageview in the cluster. A SEPARATE port from 8082 on
+            # purpose; public-manifest-endpoint.yaml tabulates why the two must not share one.
+            - name: public
+              containerPort: 8083
               protocol: TCP
           # Readiness is gated on the webhook's TLS listener, not on a generic ping — a pod
           # that reports Ready before the listener is up makes the Service route admission to

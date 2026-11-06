@@ -1,0 +1,69 @@
+---
+# The PUBLIC manifest endpoint's Service — the operator becoming the SOLE producer of the nav
+# manifest.
+#
+# WHAT CHANGED, AND WHY THIS IS THE DELETION OF A DUPLICATE RATHER THAN AN ADDITION. Until
+# this existed, /catalyst/resources/catalyst-nav.json was a FILE: build_nav.py ran in a sidecar
+# beside the theme server every 300 seconds, wrote catalyst-nav.json into an emptyDir, and
+# nginx served it. That was a second implementation of the derivation this operator already
+# performs — one in Python, one in Go — kept in step only by a byte-for-byte parity task that
+# no CI in this repo runs. The sidecar, its script, its ConfigMap and its cluster-wide
+# IngressRoute read RBAC are all gone; this Service is what serves that path now.
+#
+# A SEPARATE Service from catalyst-nav-manifest (the per-identity endpoint, port 8082) rather
+# than a second port on it. The two endpoints are opposites in both of the dimensions that
+# matter, and the routes in front of them differ accordingly:
+#
+#                      per-identity (8082)            public (8083)
+#   filtering          every response filtered        never filtered
+#   caching            private, no-store              public, max-age=300
+#   forward-auth       REQUIRED (authentik-lan)       MUST NOT be present
+#   reads headers      yes, that is its whole job     no, none, structurally
+#
+# Keeping them on distinct ports behind distinct Services means a mistake in one route cannot
+# deliver traffic to the other handler, and means either endpoint can be quarantined by
+# deleting one object. Same reasoning the webhook Service is kept separate from both: do not
+# widen an object something else depends on in order to publish an unrelated endpoint.
+#
+# WHY NOT MIRROR THE ConfigMap INTO ns themepark INSTEAD. That was the other candidate design
+# — reflector already runs in this cluster (it mirrors the CNPG secrets to dbgate), so
+# catalyst-nav-manifest could have been copied into the themepark namespace and mounted into
+# the theme server's pod with subPath, leaving nginx to serve it exactly as before. It was
+# rejected because IT CANNOT STAY FRESH:
+#
+#   - A subPath mount is FROZEN at pod start. kubelet never propagates ConfigMap updates into
+#     one; the theme server's own manifests say so, in three places, about the CSS.
+#   - The mechanism that makes that acceptable for the CSS — kustomize's configMapGenerator
+#     hash suffix, which changes the ConfigMap NAME on edit and therefore rolls the pod — is
+#     unavailable here. A reflector mirror has a fixed name that never changes, so there is
+#     nothing to make the podTemplate differ and nothing to trigger a rollout.
+#   - The result would be a public manifest frozen at whatever the operator had published the
+#     last time the themepark pod happened to restart. Theme a new app and it would never
+#     join the public nav. That is STRICTLY WORSE than the 300-second sidecar loop it
+#     replaces, and it fails silently — the manifest is valid, just stale.
+#   - Adding a reloader annotation to bounce the pod on every nav change would fix freshness
+#     by making every new app a rollout of the origin serving ~60 apps' stylesheets. The pod
+#     runs 2 replicas with maxUnavailable: 0 precisely because a restart reads to a user as
+#     "the theme broke"; trading that for freshness is the wrong side of the trade.
+#
+# Serving from the operator has none of those problems: the bytes are produced in the same
+# process that reconciles, so they are current the instant a reconcile completes, with no pod
+# restart anywhere and no second copy of the data in the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalyst-nav-public
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: public-manifest
+    app.kubernetes.io/part-of: catalyst
+spec:
+  selector:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+  ports:
+    - name: http
+      port: 80
+      targetPort: public
+      protocol: TCP

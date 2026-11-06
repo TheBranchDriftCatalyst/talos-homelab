@@ -130,6 +130,32 @@ func runManager() error {
 		return fmt.Errorf("wiring the manifest endpoint: %w", err)
 	}
 
+	// The PUBLIC manifest endpoint. This is what makes the operator the sole producer of the
+	// nav manifest: it serves the unfiltered bytes at the exact path the deleted
+	// build_nav.py sidecar's file was served at, so the ~57 themed hosts that never opted
+	// into the per-identity endpoint — including the 21 that structurally cannot, having no
+	// forward-auth — keep working with no client change at all.
+	//
+	// A SEPARATE LISTENER from the identity endpoint above, not a second route onto one mux.
+	// The two have opposite caching and opposite filtering, and the route in front of each
+	// differs in whether it carries forward-auth; keeping them on distinct ports means the
+	// CiliumNetworkPolicy and the Service for each are separate objects that can be
+	// quarantined independently, and means no path-matching mistake can deliver a request to
+	// the handler it was not routed to. See internal/navserve/public.go.
+	//
+	// SAME Source as the identity handler: one build per reconcile feeds the ConfigMap, the
+	// per-identity bytes and these public bytes, so none of the three can disagree.
+	publicHandler := navserve.NewPublicHandler(snapshots, navserve.PublicConfig{
+		Path:         envOr("NAV_PUBLIC_PATH", navserve.DefaultPublicPath),
+		CacheControl: envOr("NAV_PUBLIC_CACHE_CONTROL", navserve.DefaultPublicCacheControl),
+	}, metrics.Registry)
+	if err := mgr.Add(&navserve.Server{
+		Addr:    envOr("NAV_PUBLIC_ADDR", ":8083"),
+		Handler: publicHandler,
+	}); err != nil {
+		return fmt.Errorf("wiring the public manifest endpoint: %w", err)
+	}
+
 	navReconciler := &controller.NavReconciler{
 		Client:        mgr.GetClient(),
 		Namespace:     ns,

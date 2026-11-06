@@ -17,12 +17,24 @@ kind: Kustomization
 # navGroupRef names no NavGroup. It publishes into a ConfigMap that nothing reads — see
 # operator/kustomization.yaml for what deploying it would and would not change.
 #
-# infrastructure/base/themepark/server/nav/ (discover.sh + build_nav.py) is the live nav
-# pipeline and is untouched by this directory. It keeps deriving catalyst-nav.json from
-# gethomepage.dev/* annotations exactly as it does today. A later phase teaches that
-# pipeline to resolve against NavGroup/NavEntry objects instead of taking annotation
-# strings verbatim; until that phase lands, these CRDs and taxonomy objects have zero
-# effect on what ships to the browser even once applied.
+# infrastructure/base/themepark/server/nav/ (discover.sh + build_nav.py) IS DELETED. That
+# sidecar was the live nav pipeline for the whole migration; the operator here is now the SOLE
+# producer of the manifest, and serves it on two endpoints:
+#
+#   /catalyst/resources/catalyst-nav.json   public, unfiltered, cacheable — the path the
+#                                           sidecar's file was served at, byte-identical,
+#                                           which is what made the sidecar deletable. ~50
+#                                           themed hosts read this, including the 21 that have
+#                                           no forward-auth and structurally cannot read the
+#                                           other one. See operator/public-manifest-route.yaml.
+#   /catalyst-nav/v1/manifest.json          per-identity, filtered through NavGroup
+#                                           spec.visibility, forward-auth required. 8 apps
+#                                           opt in via data-nav-manifest="identity".
+#
+# So the taxonomy objects below are no longer inert: `infrastructure` declares
+# spec.visibility, and that visibility is enforced today on the per-identity endpoint (its 5
+# entries are hidden from anyone outside talos-admin / cluster-admin). It is NOT enforced on
+# the public endpoint, deliberately — see operator/internal/navserve/public.go.
 #
 # Resource order matters only in the sense that the CRDs must exist before the taxonomy's
 # NavGroup instances can be created — Kustomize/kubectl apply -k does not guarantee
