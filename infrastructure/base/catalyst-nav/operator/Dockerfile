@@ -3,9 +3,16 @@
 # Build & push (no CI in this repo builds images — verified: no workflow, no Taskfile task and
 # no lefthook hook does, so this is manual like the plausible exporter's):
 #
-#   docker build -t registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0 \
+#   docker build --platform linux/amd64 \
+#     -t registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0 \
 #     infrastructure/base/catalyst-nav/operator
 #   docker push registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0
+#
+# --platform linux/amd64 IS REQUIRED. Every node in this cluster is amd64; a build on an
+# Apple Silicon workstation defaults to arm64 and produces an image that pulls perfectly
+# and then dies with `exec /catalyst-nav-operator: exec format error`. That surfaces as
+# CrashLoopBackOff AFTER a successful pull, so it reads like an application fault rather
+# than a build mistake. Observed 2026-11-06.
 #
 # Then resolve the pushed digest and pin it in deployment.yaml — a mutable tag on a running
 # workload is an upgrade trigger, not a version.
