@@ -1,0 +1,28 @@
+# talos06 ONLY. Ignore the spare NIC so it can never be addressed.
+#
+# PREVENTIVE, not reactive — see TALOS-fxo2 for the incident this generalises.
+# talos01 had TWO NICs cabled to the SAME subnet; Talos DHCPs every link, Cilium
+# auto-detection bound both, and because only ONE device can be used for direct
+# routing between Cilium nodes the overlay silently isolated the node
+# (cilium-health "Node: 1/1, Endpoints: 0/1" — host routing fine, pod-to-pod
+# dead) while the node still reported Ready.
+#
+# talos06 has the same latent exposure:
+#   enp45s0  84:47:09:6d:09:a2  ACTIVE, carries the InternalIP 192.168.1.19
+#   enp44s0  84:47:09:6d:09:a3  spare, link DOWN today only because nothing is
+#                               cabled to it
+#
+# The cluster is about to be physically un-cabled and re-cabled at a new house,
+# which is exactly when a cable lands in an extra or wrong port. If that happens
+# this node repeats talos01's outage, and the symptom will point at Cilium or DNS
+# rather than at a cable.
+#
+# NOTE THE MACs DIFFER BY ONE DIGIT (…a2 active vs …a3 spare). Transposing them
+# disables the node's only working interface and costs a physical console trip.
+# Verify with `talosctl -n 192.168.1.19 get links` before ever editing this.
+machine:
+  network:
+    interfaces:
+      - deviceSelector:
+          hardwareAddr: "84:47:09:6d:09:a3"
+        ignore: true
