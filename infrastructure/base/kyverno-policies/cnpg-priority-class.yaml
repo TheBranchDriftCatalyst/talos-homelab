@@ -1,0 +1,97 @@
+---
+# The background controller needs get/update on CNPG Clusters to retrofit the 9
+# standalone ones. Without this the policy is REJECTED at admission outright:
+# "auth check fails, additional privileges are required for ...
+# kyverno-background-controller requires permissions get,update for resource
+# postgresql.cnpg.io/v1/Cluster". Same aggregation pattern as
+# kyverno:background:cnpg-secret-reflect in reflect-cnpg-app-secrets.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background:cnpg-priority-class
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    # Also aggregate to the REPORTS controller. Without it the policy still works
+    # but Kyverno warns "kyverno-reports-controller requires permissions
+    # get,list,watch for resource postgresql.cnpg.io/v1/Cluster" and policy
+    # reports for these Clusters are silently incomplete.
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch, update, patch]
+---
+# Every CloudNativePG cluster outranks the workloads that depend on it.
+#
+# WHY A POLICY WHEN THE COMPOSITION ALREADY DOES THIS: the CatalystCNPGAppDB
+# composition sets spec.priorityClassName on the 14 clusters it manages, which is
+# the right home for those. Nine others are standalone, and TWO OF THOSE LIVE IN
+# SISTER REPOS this repo cannot edit (boomtime/boomtime-postgres and
+# openscad/manyfold-postgres, both ArgoCD-managed). A ClusterPolicy is the only
+# mechanism that can hold the invariant over those two — exactly the argument
+# cnpg-velero-exclude makes for the backup-exclusion label, and the reason that
+# one is a policy rather than 11 copies of three lines.
+#
+# THE INCIDENT (TALOS-fxo2, 2026-11-06). A CNPG instance CANNOT route around a
+# full node: its PVC is local-path, so the PV's nodeAffinity pins the pod to one
+# machine. 59 Velero kopia maintenance Jobs held talos06's CPU (15595m of 15600m
+# requested) and authentik-postgres-2 — the PRIMARY — sat Pending for 45 minutes
+# with nowhere to go. authentik went down; zot panicked without its OIDC
+# provider; 11 apps could not pull images that live in zot. One backup job
+# beating one database to a node cost about 15 apps.
+#
+# platform-data (800000000) lets a Pending instance PREEMPT lower-priority pods
+# on its pinned node, which is the only lever that helps when the pod cannot move.
+#
+# ADD-IF-ABSENT, so the composition's value (and any hand-set one) always wins and
+# this policy is a floor rather than an override.
+#
+# NOTE ON EFFECT: CNPG does NOT roll pods for a priorityClassName change — it
+# reports "Cluster in healthy state" and leaves them. So this takes effect on the
+# next pod creation, which is exactly what a cold boot does. Verified 2026-11-06:
+# 14 clusters carried the field while their pods still showed priority=0. Check
+# the POD's .spec.priority, never just the Cluster's spec.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: cnpg-priority-class
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: platform-data priority for every CNPG cluster
+    policies.kyverno.io/category: Scheduling
+    policies.kyverno.io/subject: Cluster
+    policies.kyverno.io/description: >-
+      Adds spec.priorityClassName=platform-data to any CloudNativePG Cluster that
+      does not already set one, so a Postgres instance pinned to a node by its
+      local-path volume can preempt lower-priority pods there instead of sitting
+      Pending. Covers the standalone clusters the CatalystCNPGAppDB composition
+      does not manage, including two that live in sister repos.
+spec:
+  # Mutation only — never block a CNPG Cluster because of this.
+  failurePolicy: Ignore
+  admission: true
+  # background: true so existing clusters are retrofitted, not only new ones.
+  # The 9 standalone clusters already exist and will never be re-admitted.
+  background: true
+  rules:
+    - name: add-platform-data-priority
+      match:
+        any:
+          # Fully qualified: pins the CNPG API group so the match cannot silently
+          # widen if another CRD serves a kind named Cluster. Crossplane AND
+          # Cilium both ship kinds that collide on the short name — the same
+          # reasoning as cnpg-velero-exclude.
+          - resources:
+              kinds:
+                - postgresql.cnpg.io/v1/Cluster
+      mutate:
+        # mutateExisting so the 9 already-admitted standalone clusters are
+        # retrofitted. Admission alone would only ever reach new ones.
+        targets:
+          - apiVersion: postgresql.cnpg.io/v1
+            kind: Cluster
+        patchStrategicMerge:
+          spec:
+            +(priorityClassName): platform-data

@@ -438,7 +438,77 @@ else
   fi
 fi
 
-printf "  %-16s ${GREEN}%s/%s${NC}\n" "etcd members" "$members" "$EXPECT_ETCD"
+# etcd: membership is PERSISTENT REGISTRATION, not health. After a cold boot all
+# members stay registered even if one node's etcd is dead, so a row count passes
+# while the cluster is degraded. Ask every control plane directly.
+etcd_bad=()
+for _c in "${CPS[@]}"; do
+  _ip="${_c#*:}"
+  talosctl --talosconfig "$TALOSCONFIG" --nodes "$_ip" etcd status > /dev/null 2>&1 ||
+    etcd_bad+=("${_c%:*}")
+done
+if [[ ${#etcd_bad[@]} -eq 0 ]]; then
+  printf "  %-16s ${GREEN}%s/%s, every CP answers etcd status${NC}\n" "etcd" "$members" "$EXPECT_ETCD"
+else
+  printf "  %-16s ${RED}%s/%s registered BUT etcd status FAILED on: %s${NC}\n" \
+    "etcd" "$members" "$EXPECT_ETCD" "${etcd_bad[*]}"
+  YELLOWS=$((YELLOWS + 1))
+fi
+
+# CROSS-NODE DATAPATH. This row exists because on 2026-11-06 every other row here
+# was green while talos01's Cilium overlay was completely isolated: the node was
+# Ready, etcd 3/3, cordons clear, and pods on it could reach nothing.
+# cilium-health said "Node: 1/1, Endpoints: 0/1" -- host routing fine, pod-to-pod
+# dead -- and the only visible symptoms blamed Flux, authentik, mimir and
+# admission webhooks. Four wrong layers. It took manual bisection to find.
+#
+# THE PROBE MUST BE PINNED PER NODE. An unpinned `kubectl run` landed on the same
+# node as CoreDNS, resolved fine, and produced a FALSE PASS that was read as "DNS
+# is healthy" while the cluster was broken. A node-local probe cannot see this
+# class of fault by construction.
+if true; then
+  probe_nodes=$(kubectl get nodes --no-headers 2> /dev/null | awk '{print $1}')
+  if [[ -z "$probe_nodes" ]]; then
+    printf "  %-16s ${YELLOW}unknown — API not listing nodes${NC}\n" "cross-node"
+    YELLOWS=$((YELLOWS + 1))
+  else
+    dns_bad=()
+    while read -r _n; do
+      [[ -z "$_n" ]] && continue
+      kubectl run "coldboot-dns-$_n-$$" --rm -i --restart=Never --image=busybox:1.36 \
+        --timeout=75s \
+        --overrides="{\"spec\":{\"nodeName\":\"$_n\",\"tolerations\":[{\"operator\":\"Exists\"}]}}" \
+        -- nslookup kubernetes.default.svc.cluster.local > /dev/null 2>&1 ||
+        dns_bad+=("$_n")
+    done <<< "$probe_nodes"
+    if [[ ${#dns_bad[@]} -eq 0 ]]; then
+      printf "  %-16s ${GREEN}all nodes resolve cluster DNS from their own pods${NC}\n" "cross-node"
+    else
+      printf "  %-16s ${RED}pods on these nodes CANNOT resolve DNS: %s${NC}\n" "cross-node" "${dns_bad[*]}"
+      printf "  %-16s ${DIM}suspect overlay isolation — cilium-health status, Endpoints column${NC}\n" ""
+      YELLOWS=$((YELLOWS + 1))
+    fi
+  fi
+fi
+
+# Workloads that can never produce a pod. A Deployment at 0/N with FailedCreate
+# is INVISIBLE to every other row here and to Flux, which reports Ready=True
+# because the manifest applied fine. themepark hit this on 2026-11-06: the live
+# object still named serviceAccountName themepark-nav, deleted with the Python nav
+# sidecar, and its managedFields was empty so Flux had nothing to prune against.
+# The old pods survived on their old spec; the cold boot recreated them and every
+# themed app lost its CSS. Latent drift that only a restart detonates.
+if true; then
+  zero_reps=$(kubectl get deploy -A --no-headers 2> /dev/null |
+    awk '{split($3,a,"/"); if (a[1]=="0" && a[2]+0 > 0) print $1"/"$2}')
+  if [[ -z "$zero_reps" ]]; then
+    printf "  %-16s ${GREEN}none${NC}\n" "0-replica"
+  else
+    printf "  %-16s ${RED}%s${NC}\n" "0-replica" "$(printf '%s' "$zero_reps" | tr '\n' ' ')"
+    printf "  %-16s ${DIM}kubectl describe rs -n <ns> <name> | grep FailedCreate${NC}\n" ""
+    YELLOWS=$((YELLOWS + 1))
+  fi
+fi
 
 pods_out=$(kubectl get pods -A --no-headers 2> /dev/null)
 if [[ -z "$pods_out" ]]; then

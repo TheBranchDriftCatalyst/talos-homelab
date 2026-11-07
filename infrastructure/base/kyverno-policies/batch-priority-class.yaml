@@ -1,0 +1,70 @@
+---
+# Put deferrable maintenance Jobs BELOW everything real, so they can never again
+# win a node ahead of a database.
+#
+# THE INCIDENT (TALOS-fxo2, 2026-11-06). 362 of 414 pods had no priorityClassName,
+# so everything sat at priority 0 and the scheduler had no way to rank a Postgres
+# primary above a backup job. 59 Velero kopia repository-maintenance Jobs held the
+# CPU on talos06 (15595m of 15600m requested -- 5 millicores free) and
+# authentik-postgres-2, the PRIMARY, sat Pending for 45 minutes. It could not go
+# anywhere else: its PVC is local-path, so the PV's nodeAffinity pins it to that
+# one machine. authentik went down, zot then panicked because it hard-exits
+# without its OIDC provider, and 11 apps could not pull images that live in zot.
+#
+# WHY A POLICY AND NOT A MANIFEST EDIT: these Jobs do not exist in git. Velero
+# generates them from its BackupRepository CRs (18 repositories x
+# keepLatestMaintenanceJobs:3 = up to 54 retained), so there is no jobTemplate
+# here to annotate. A mutate at admission is the only place to reach them.
+#
+# WHY batch-background IS NEGATIVE (-10000): it must lose to plain applications
+# too, not just to the platform tiers. Applications sit at the implicit default 0.
+#
+# preemptionPolicy on the class is Never, so these Jobs never evict anything to
+# start -- but they remain freely preemptible BY anything above them, which is the
+# whole point. A Pending platform-data pod can now evict a running kopia job on
+# its pinned node.
+#
+# SAFE TO MUTATE HERE: ns `backup` is not one of Kyverno's excluded namespaces
+# (only kube-system, kyverno, kube-public and kube-node-lease are), and these Jobs
+# are Velero-created rather than Flux-applied, so the Flux-SSA-invisibility
+# concern does not apply either.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: batch-priority-class
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: Deprioritise deferrable maintenance Jobs
+    policies.kyverno.io/category: Scheduling
+    policies.kyverno.io/subject: Job
+    policies.kyverno.io/description: >-
+      Sets spec.template.spec.priorityClassName=batch-background on Velero's
+      repository-maintenance Jobs in the backup namespace, so they rank below
+      every real workload including plain applications. Add-if-absent, so a
+      hand-set value always wins. These Jobs caused a 45-minute database outage
+      on 2026-11-06 by winning a node ahead of a CNPG primary that was pinned
+      there by its local-path volume.
+spec:
+  # Mutation only — a maintenance Job must never be BLOCKED by this.
+  failurePolicy: Ignore
+  admission: true
+  background: false
+  rules:
+    - name: batch-priority-on-backup-jobs
+      match:
+        any:
+          - resources:
+              kinds:
+                - batch/v1/Job
+              namespaces:
+                - backup
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                # Add-if-absent: the +( ) anchor on a SCALAR is a real add. (The
+                # silent no-op trap in this repo is `+(key): {}` on an empty MAP,
+                # which strategic merge cannot add — not this.)
+                +(priorityClassName): batch-background
