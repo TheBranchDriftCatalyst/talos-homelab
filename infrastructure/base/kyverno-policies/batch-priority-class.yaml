@@ -59,6 +59,22 @@ spec:
                 - batch/v1/Job
               namespaces:
                 - backup
+      # DO NOT DEMOTE THE ETCD BACKUP. Found by audit 2026-11-06: the original
+      # rule matched EVERY Job in ns backup, so the hourly etcd-backup CronJob --
+      # a safety mechanism, and the thing that makes a bad move recoverable --
+      # became the lowest-priority, never-preempting workload in the fleet. On a
+      # packed cluster its failure mode degrades from "runs and fails loudly" to
+      # "sits Pending silently", which is far worse for a backup.
+      #
+      # Velero's maintenance Jobs are all named <app>-<repo>-kopia-maintain-job-<ts>,
+      # so an explicit kopia match is both precise and self-documenting. A new
+      # Velero job TYPE would not be covered -- that is the deliberate trade: this
+      # policy demotes only what it can name, rather than everything it can reach.
+      preconditions:
+        all:
+          - key: "{{ request.object.metadata.name }}"
+            operator: AnyIn
+            value: ["*kopia*"]
       mutate:
         patchStrategicMerge:
           spec:

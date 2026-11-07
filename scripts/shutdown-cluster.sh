@@ -22,7 +22,7 @@
 #   WORKER_WAIT_TIMEOUT    secs to wait for workers to die   (default 180)
 #   CP_WAIT_TIMEOUT        secs to wait per control plane    (default 180)
 #   FINAL_RECHECK_TIMEOUT  secs for the final verification   (default 60)
-#   DRAIN_TIMEOUT          kubectl drain timeout             (default 120s)
+#   DRAIN_TIMEOUT          kubectl drain timeout             (default 600s)
 #   SNAPSHOT_DIR           where the etcd snapshot lands     (default $HOME)
 #   SKIP_SNAPSHOT=1        proceed even if the snapshot fails
 #   ALLOW_BROKEN_WEBHOOKS=1  proceed past the admission-webhook gate
@@ -499,6 +499,41 @@ stage "Shut down workers (graceful, parallel)"
 if [[ ${#WORKERS[@]} -eq 0 ]]; then
   info "no workers to shut down"
 else
+  # DRAIN THE WORKERS FIRST, with --disable-eviction.
+  #
+  # Plain `talosctl shutdown` makes Talos self-drain through the EVICTION API,
+  # which can never evict a PDB-guarded pod in a whole-cluster shutdown: CNPG
+  # gives every cluster a `<name>-primary` PDB with minAvailable 1, so the primary
+  # is permanently unevictable without a switchover. Measured 2026-11-06: 26 PDBs
+  # sit at disruptionsAllowed 0.
+  #
+  # THIS IS WHERE MOST OF THE RISK LIVES. 41 of the 44 CNPG instance pods are on
+  # the two workers (21 on talos02-gpu, 20 on talos06). The 2026-11-06 shutdown
+  # drained only control planes, so those pods were never drained OR deleted --
+  # they died on node power-off with the API already gone, which is how zot came
+  # back with a truncated index.json.
+  #
+  # Deleting here also makes the priority-class work effective: a pod that is
+  # never deleted is never recreated, so it reboots with its OLD spec and never
+  # picks up platform-data. Drain-then-delete is what lets the new class apply.
+  if $HAVE_KUBECTL; then
+    for w in "${WORKERS[@]}"; do
+      wname="${w%:*}"
+      if $DRY_RUN; then
+        printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --disable-eviction --timeout=%s\n" \
+          "$wname" "${DRAIN_TIMEOUT:-600s}"
+      elif kubectl drain "$wname" --ignore-daemonsets --delete-emptydir-data --force \
+        --disable-eviction --timeout="${DRAIN_TIMEOUT:-600s}" > "$LOG_DIR/drain-$wname.log" 2>&1; then
+        ok "drained ${BOLD}$wname${NC}"
+      else
+        warn "drain incomplete for $wname (see $LOG_DIR/drain-$wname.log) — continuing"
+      fi
+    done
+  else
+    warn "no kubectl — workers self-drain via the eviction API, which CANNOT evict"
+    warn "PDB-guarded CNPG primaries. Expect ungraceful stops for 41 postgres pods."
+  fi
+
   pids=()
   for w in "${WORKERS[@]}"; do
     name="${w%:*}"
@@ -543,7 +578,7 @@ if $HAVE_KUBECTL; then
     name="${c%:*}"
     if $DRY_RUN; then
       printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --disable-eviction --timeout=%s\n" \
-        "$name" "${DRAIN_TIMEOUT:-120s}"
+        "$name" "${DRAIN_TIMEOUT:-600s}"
       # --disable-eviction makes drain DELETE pods rather than go through the
       # eviction API, bypassing PodDisruptionBudgets.
       #
@@ -565,7 +600,7 @@ if $HAVE_KUBECTL; then
       # is up and quorum holds — strictly gentler than what respecting the PDBs
       # actually produced.
     elif kubectl drain "$name" --ignore-daemonsets --delete-emptydir-data --force --disable-eviction \
-      --timeout="${DRAIN_TIMEOUT:-120s}" > "$LOG_DIR/drain-$name.log" 2>&1; then
+      --timeout="${DRAIN_TIMEOUT:-600s}" > "$LOG_DIR/drain-$name.log" 2>&1; then
       ok "drained ${BOLD}$name${NC}"
     else
       warn "drain incomplete for $name (see $LOG_DIR/drain-$name.log) — continuing"

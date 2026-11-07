@@ -35,6 +35,18 @@ spec:
         # indefinitely and the change looks like it silently did nothing.
         reloader.stakater.com/auto: "true"
     spec:
+      # zot is a STATEFUL ROOT and the tier doc names it as one, but nothing was
+      # assigning the class -- found by audit 2026-11-06 (TALOS-fxo2).
+      #
+      # Its PVC is local-path, so the PV's nodeAffinity pins it to talos06 -- the
+      # SAME node MinIO is pinned to, because MinIO's image survives only in that
+      # node's containerd cache. When MinIO was given platform-data and zot was
+      # left at priority 0, MinIO outranked zot on their shared node and zot went
+      # Pending with 'No preemption victims found' (it cannot preempt at 0).
+      # That is a priority INVERSION between a component we accept losing and one
+      # we cannot: 11 apps pull their images from zot, so zot down means those
+      # apps cannot start at all after a reboot.
+      priorityClassName: platform-data
       # OIDC discovery to auth.talos00 works in-cluster via the CoreDNS rewrite
       # (infrastructure/base/kube-system/coredns) — no hostAlias / hardcoded IP.
       securityContext:

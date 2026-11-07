@@ -491,6 +491,43 @@ if true; then
   fi
 fi
 
+# TRAEFIK PLUGIN RACE — THE BIGGEST COLD-BOOT RISK AT A NEW SITE.
+#
+# `bouncer` and `catalyst-inject-nav` are PLUGIN-type Middlewares, and Traefik
+# fetches plugin source from GitHub AT CONTAINER START. If a Traefik pod starts
+# before WAN egress works, the fetch fails and Traefik DROPS EVERY ROUTER that
+# references those middlewares -- ~174 of them -- while the pod still reports
+# Ready, because its readiness probe is a /ping endpoint that knows nothing about
+# the route table. Cilium then load-balances into a pod serving almost nothing.
+#
+# Measured 2026-11-06 after the rehearsal: 2 of 3 Traefik pods were in this state
+# and 12 of 20 requests through the LB VIP returned 404. It read as a Cilium or
+# DNS fault and was found only by curling each node separately.
+#
+# ON ARRIVAL THIS IS THE LIKELY DEFAULT, not an edge case: the nodes will boot
+# before the new site's WAN is up, so EVERY Traefik pod can lose the race and
+# ingress is 100% down cluster-wide. The fix is to bounce the DaemonSet once WAN
+# is confirmed -- which is why this check exists and why it names the remedy.
+if [[ -n "$(kubectl get pods -n traefik --no-headers 2> /dev/null)" ]]; then
+  tfk_bad=()
+  while read -r _p; do
+    [[ -z "$_p" ]] && continue
+    if kubectl logs -n traefik "$_p" --tail=300 2> /dev/null |
+      grep -q 'middleware does not exist'; then
+      tfk_bad+=("$_p")
+    fi
+  done <<< "$(kubectl get pods -n traefik --no-headers 2> /dev/null | awk '$2=="1/1"{print $1}')"
+  if [[ ${#tfk_bad[@]} -eq 0 ]]; then
+    printf "  %-16s ${GREEN}no dropped routers${NC}\n" "traefik routes"
+  else
+    printf "  %-16s ${RED}%s pod(s) dropped routers — plugin fetch failed${NC}\n" \
+      "traefik routes" "${#tfk_bad[@]}"
+    printf "  %-16s ${DIM}confirm WAN, then: kubectl delete pod -n traefik %s${NC}\n" \
+      "" "${tfk_bad[*]}"
+    YELLOWS=$((YELLOWS + 1))
+  fi
+fi
+
 # Workloads that can never produce a pod. A Deployment at 0/N with FailedCreate
 # is INVISIBLE to every other row here and to Flux, which reports Ready=True
 # because the manifest applied fine. themepark hit this on 2026-11-06: the live
