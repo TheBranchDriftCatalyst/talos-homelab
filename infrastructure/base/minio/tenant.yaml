@@ -139,6 +139,19 @@ metadata:
     app.kubernetes.io/name: minio
     app.kubernetes.io/component: storage
 spec:
+  # MinIO is a STATEFUL ROOT: Mimir's blocks storage, Velero's backup target and
+  # the CNPG barman WAL archive all point at it. When MinIO is down, Mimir's whole
+  # stateful tier fails to start -- ingester 0/3 (the metrics WRITE path),
+  # querier, ruler, compactor, store-gateway and alertmanager all loop on
+  # "Unable to successfully connect to configured object storage". So MinIO must
+  # outrank the workloads that depend on it.
+  #
+  # It also cannot move: the only copy of its image left anywhere reachable is in
+  # talos06's containerd cache (see the nodeSelector on pool-0 and TALOS-fxo2.4),
+  # and talos06 was 100% committed on memory. Without a priority class MinIO just
+  # sat Pending behind priority-0 pods on the one node it is allowed to run on.
+  # platform-data lets it preempt them instead. TALOS-fxo2.
+  priorityClassName: platform-data
   # Tenant configuration secret
   configuration:
     name: minio-env-config
