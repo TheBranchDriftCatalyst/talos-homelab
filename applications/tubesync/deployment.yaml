@@ -33,15 +33,31 @@ spec:
               value: "1000"
             - name: TZ
               value: America/Los_Angeles
-          # Measured 24h to 2026-08-24: p50 542Mi, peak 556Mi (1.03x). Flat
-          # because tubesync holds its media index resident. BURSTABLE with a
-          # generous limit — it downloads and remuxes, which spikes.
+          # Originally sized from 24h to 2026-08-24: p50 542Mi, peak 556Mi, limit
+          # 1280Mi (2.3x headroom). That measurement is STALE — by 2026-11-14 the
+          # pod had been OOMKilled 202 times (exit 137).
+          #
+          # WHY THE NEW NUMBER IS A JUDGEMENT AND NOT A MEASUREMENT: a container
+          # killed AT its limit cannot tell you what it wanted. Querying
+          # max_over_time(container_memory_working_set_bytes[30d]) returns 1279Mi
+          # against a 1280Mi limit — the ceiling, by construction, not the demand.
+          # Most series read 5Mi because those pods died at startup. So 3Gi is
+          # chosen headroom (2.4x the old cap), not a fitted value.
+          #
+          # RE-MEASURE once it has run un-OOMKilled for a week and tighten this.
+          # If it OOMs again at 3Gi, suspect a leak rather than sizing: a remux
+          # workload that grows past 2x its previous ceiling is not just busier.
+          #
+          # Only the LIMIT moved. requests stays 640Mi because the node memory is
+          # tight (talos01/talos03 near their ceilings) and requests are what the
+          # scheduler reserves — raising it would cost capacity the cluster does
+          # not have, for a process that idles around 5-116Mi.
           resources:
             requests:
               cpu: 50m
               memory: 640Mi
             limits:
-              memory: 1280Mi
+              memory: 3Gi
           volumeMounts:
             - name: config
               mountPath: /config
