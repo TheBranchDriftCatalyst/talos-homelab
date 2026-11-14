@@ -39,6 +39,21 @@ spec:
     deployment:
       kind: DaemonSet # Use DaemonSet for hostPort binding
       replicas: 1
+      # Ingress outranks the workloads it serves. traefik is a DaemonSet, so its
+      # pod is bound to ONE node and cannot route around a full one -- on
+      # 2026-11-14 the talos01 pod sat Pending for 10h ("1 Insufficient memory,
+      # 4 node(s) didn't satisfy NodeAffinity") while four priority-0 pods on
+      # that node held 5Gi between them. Without a class it could not preempt
+      # any of them, so 1 of 5 nodes had no local ingress indefinitely.
+      #
+      # platform-ingress (600000000) is below platform-data, because ingress is
+      # useless without the databases behind it, and above everything it fronts.
+      # See infrastructure/base/priority-classes/. TALOS-fxo2.
+      #
+      # VERIFY AFTER CHANGING: this chart silently ignores misplaced keys (see the
+      # updateStrategy and service.spec.type notes below), so confirm with
+      #   kubectl get ds -n traefik traefik -o jsonpath={.spec.template.spec.priorityClassName}
+      priorityClassName: platform-ingress
       # chart v41 moved podLabels under deployment (was top-level). (TALOS-zadf.19)
       podLabels:
         app: traefik
