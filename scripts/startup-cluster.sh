@@ -536,8 +536,26 @@ fi
 # The old pods survived on their old spec; the cold boot recreated them and every
 # themed app lost its CSS. Latent drift that only a restart detonates.
 if true; then
-  zero_reps=$(kubectl get deploy -A --no-headers 2> /dev/null |
-    awk '{split($3,a,"/"); if (a[1]=="0" && a[2]+0 > 0) print $1"/"$2}')
+  # Only a deployment that CANNOT create a pod counts. A bare 0/N is ambiguous:
+  # during a cold boot nearly every deployment is briefly 0/N while its pods
+  # start, and this row listed ~200 of them six seconds after uncordon -- noise
+  # that buries the one real case. The discriminator is a FailedCreate event on
+  # the ReplicaSet. A mid-restart deployment has none; a structurally broken one
+  # does. themepark's was "error looking up service account
+  # themepark/themepark-nav: not found" -- git was correct, the live object kept
+  # a deleted SA, and its managedFields was empty so Flux had nothing to prune.
+  zero_reps=""
+  while read -r _ns _d _ready; do
+    [[ -z "$_d" ]] && continue
+    # replicas:0 is a legitimate scaled-to-zero state and must never be flagged
+    [[ "$_ready" == "0/0" ]] && continue
+    [[ "$_ready" != 0/* ]] && continue
+    if kubectl get events -n "$_ns" --field-selector reason=FailedCreate \
+      --no-headers 2> /dev/null | grep -q "$_d"; then
+      zero_reps="$zero_reps $_ns/$_d"
+    fi
+  done <<< "$(kubectl get deploy -A --no-headers 2> /dev/null | awk '{print $1" "$2" "$3}')"
+  zero_reps="${zero_reps# }"
   if [[ -z "$zero_reps" ]]; then
     printf "  %-16s ${GREEN}none${NC}\n" "0-replica"
   else

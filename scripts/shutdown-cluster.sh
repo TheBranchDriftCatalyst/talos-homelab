@@ -484,6 +484,47 @@ wait_offline() {
 }
 
 # ----------------------------------------------------------------------
+# Drain EVERY node, before ANY node is powered off
+#
+# WHY ALL FIVE TOGETHER, AND WHY FIRST. Draining used to be split -- workers in
+# their stage, control planes in theirs, each right before its own shutdown.
+# That ordering broke itself on 2026-11-06 (TALOS-fxo2.5): Kyverno's pods live on
+# the workers, so powering the workers off removed the admission webhook backend,
+# and every later DELETE was refused with
+#   failed calling webhook "validate.kyverno.svc-fail": Post https://kyverno-svc...
+# All three control-plane drains failed in EIGHT SECONDS. Those pods then died at
+# power-off with the API gone -- the same path that truncated zot's index.json.
+#
+# The stage-2 webhook gate cannot catch this: it checks that every webhook has a
+# healthy backend BEFORE anything is touched, and cannot know a later stage will
+# delete the backends it just approved.
+#
+# Draining a node does NOT stop its etcd or apiserver, so drain order is not
+# quorum-sensitive -- only the SHUTDOWN order is. Separating the two removes the
+# dependency: every webhook, operator and the full API are alive for all five
+# drains, and only then does anything power off.
+# ----------------------------------------------------------------------
+stage "Drain every node (while all webhooks are still alive)"
+if $HAVE_KUBECTL; then
+  for _e in "${WORKERS[@]}" "${CPS[@]}"; do
+    dname="${_e%:*}"
+    if $DRY_RUN; then
+      printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --disable-eviction --timeout=%s\n" \
+        "$dname" "${DRAIN_TIMEOUT:-600s}"
+    elif kubectl drain "$dname" --ignore-daemonsets --delete-emptydir-data --force \
+      --disable-eviction --timeout="${DRAIN_TIMEOUT:-600s}" > "$LOG_DIR/drain-$dname.log" 2>&1; then
+      ok "drained ${BOLD}$dname${NC}"
+    else
+      warn "drain incomplete for $dname (see $LOG_DIR/drain-$dname.log) — continuing"
+    fi
+  done
+else
+  warn "no kubectl — nodes will self-drain via the eviction API, which CANNOT evict"
+  warn "PDB-guarded CNPG primaries. Expect ungraceful stops for the postgres fleet."
+fi
+close_stage
+
+# ----------------------------------------------------------------------
 # [6/9] Workers, gracefully and in parallel
 #
 # NO --force. Plain shutdown makes Talos cordon and drain the node itself, so
@@ -499,41 +540,6 @@ stage "Shut down workers (graceful, parallel)"
 if [[ ${#WORKERS[@]} -eq 0 ]]; then
   info "no workers to shut down"
 else
-  # DRAIN THE WORKERS FIRST, with --disable-eviction.
-  #
-  # Plain `talosctl shutdown` makes Talos self-drain through the EVICTION API,
-  # which can never evict a PDB-guarded pod in a whole-cluster shutdown: CNPG
-  # gives every cluster a `<name>-primary` PDB with minAvailable 1, so the primary
-  # is permanently unevictable without a switchover. Measured 2026-11-06: 26 PDBs
-  # sit at disruptionsAllowed 0.
-  #
-  # THIS IS WHERE MOST OF THE RISK LIVES. 41 of the 44 CNPG instance pods are on
-  # the two workers (21 on talos02-gpu, 20 on talos06). The 2026-11-06 shutdown
-  # drained only control planes, so those pods were never drained OR deleted --
-  # they died on node power-off with the API already gone, which is how zot came
-  # back with a truncated index.json.
-  #
-  # Deleting here also makes the priority-class work effective: a pod that is
-  # never deleted is never recreated, so it reboots with its OLD spec and never
-  # picks up platform-data. Drain-then-delete is what lets the new class apply.
-  if $HAVE_KUBECTL; then
-    for w in "${WORKERS[@]}"; do
-      wname="${w%:*}"
-      if $DRY_RUN; then
-        printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --disable-eviction --timeout=%s\n" \
-          "$wname" "${DRAIN_TIMEOUT:-600s}"
-      elif kubectl drain "$wname" --ignore-daemonsets --delete-emptydir-data --force \
-        --disable-eviction --timeout="${DRAIN_TIMEOUT:-600s}" > "$LOG_DIR/drain-$wname.log" 2>&1; then
-        ok "drained ${BOLD}$wname${NC}"
-      else
-        warn "drain incomplete for $wname (see $LOG_DIR/drain-$wname.log) — continuing"
-      fi
-    done
-  else
-    warn "no kubectl — workers self-drain via the eviction API, which CANNOT evict"
-    warn "PDB-guarded CNPG primaries. Expect ungraceful stops for 41 postgres pods."
-  fi
-
   pids=()
   for w in "${WORKERS[@]}"; do
     name="${w%:*}"
@@ -562,52 +568,6 @@ else
     done
     wait_offline "workers" "$WORKER_WAIT_TIMEOUT" "${WORKERS[@]}"
   fi
-fi
-
-# ----------------------------------------------------------------------
-# [7/9] Drain EVERY control plane, before shutting ANY of them down
-#
-# THE ORDERING THAT MATTERS. Once CPs stop, etcd falls below quorum and the
-# API server stops accepting writes — so a `kubectl drain` issued against the
-# last control plane fails at exactly the moment you need it. Drain them all
-# while the cluster can still answer, then power them down.
-# ----------------------------------------------------------------------
-stage "Drain all control planes (while etcd still has quorum)"
-if $HAVE_KUBECTL; then
-  for c in "${CPS[@]}"; do
-    name="${c%:*}"
-    if $DRY_RUN; then
-      printf "  ${DIM}[dry-run]${NC} kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --disable-eviction --timeout=%s\n" \
-        "$name" "${DRAIN_TIMEOUT:-600s}"
-      # --disable-eviction makes drain DELETE pods rather than go through the
-      # eviction API, bypassing PodDisruptionBudgets.
-      #
-      # THIS IS NOT A SHORTCUT — it is the only thing that CAN work here, and
-      # omitting it caused real data corruption on 2026-11-06. A PDB asks "will
-      # enough replicas remain?"; in a whole-cluster shutdown the answer is
-      # permanently no, so eviction can NEVER drain a PDB-guarded pod. 32 pods
-      # across talos01 and talos03 failed to evict for exactly that reason —
-      # mostly CNPG Postgres instances, plus crowdsec-lapi, kyverno-admission
-      # and virt-api.
-      #
-      # Those pods then died later inside `talosctl shutdown`, as kubelet stopped
-      # with the API server already gone — the least graceful path available. zot
-      # came back with a TRUNCATED index.json ("unexpected end of JSON input")
-      # and needed hand repair.
-      #
-      # Deleting still sends SIGTERM and still honours the full
-      # terminationGracePeriodSeconds, and it happens HERE while the API server
-      # is up and quorum holds — strictly gentler than what respecting the PDBs
-      # actually produced.
-    elif kubectl drain "$name" --ignore-daemonsets --delete-emptydir-data --force --disable-eviction \
-      --timeout="${DRAIN_TIMEOUT:-600s}" > "$LOG_DIR/drain-$name.log" 2>&1; then
-      ok "drained ${BOLD}$name${NC}"
-    else
-      warn "drain incomplete for $name (see $LOG_DIR/drain-$name.log) — continuing"
-    fi
-  done
-else
-  warn "skipped (no kubectl)"
 fi
 
 # ----------------------------------------------------------------------
