@@ -1,0 +1,67 @@
+---
+# God's Eye View — the ONE place to tune this app. Fill these in as you go.
+#
+# ============================ WHAT GOES WHERE ==============================
+# THIS FILE IS FOR NON-SECRET SETTINGS ONLY, and the split is not pedantry:
+# THIS REPO IS PUBLIC. A real API key committed here is published to the world
+# the moment it is pushed, and the gitleaks pre-commit hook will usually refuse
+# the commit anyway. There is no "private enough" corner of a public repo.
+#
+# The ~10 actual provider KEYS live in 1Password item `godseye` (vault
+# catalyst-eso) and reach the pod as a Secret via externalsecret.yaml — which is
+# also a single place you fill in as you go, one field at a time, with empty
+# fields perfectly fine. See TALOS-wrzb.
+#
+# Both are wired through `envFrom` on the Deployment, this ConfigMap first and
+# the Secret second, so a key always wins over anything set here.
+#
+# Everything below is OPTIONAL. The app boots with all of it empty; these only
+# shape behaviour once the matching key exists. Values are quoted strings
+# because that is what a ConfigMap stores — the app parses the numbers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: godseye-config
+  namespace: godseye
+  labels:
+    app: godseye
+data:
+  # ---- Flight tracking (OpenSky) -----------------------------------------
+  # "oauth" uses OPENSKY_CLIENT_ID/SECRET from the Secret. Anonymous access
+  # exists but is rate-limited hard enough to be useless for a live map.
+  OPENSKY_AUTH_MODE: "oauth"
+
+  # ---- Live vessels (AIS) -------------------------------------------------
+  # Row caps are a render-cost dial, not a data limit: raising them puts more
+  # ships on the globe at the cost of frame rate.
+  VITE_AIS_LIVE_API_URL: "/api/vessels"
+  VITE_AIS_LIVE_MAX_ROWS: "12000"
+  VITE_AIS_LIVE_LABEL_MAX_ROWS: "900"
+
+  # ---- Overpass (OpenStreetMap infrastructure queries) --------------------
+  # Comma-separated mirror list. Empty = upstream defaults. Worth setting only
+  # if the public endpoints start rate-limiting the whole cluster as one client.
+  OVERPASS_UPSTREAMS: ""
+
+  # ---- Voice mode / analyst answers (needs OPENAI_API_KEY in the Secret) --
+  # These are MODEL NAMES AND TUNABLES, not credentials. They are upstream's
+  # defaults as of v0.3.0; change them deliberately, since a model name that
+  # does not exist fails at request time, not at boot.
+  OPENAI_CHAT_MODEL: "gpt-4.1-mini"
+  OPENAI_REALTIME_MODEL: "gpt-realtime-2"
+  OPENAI_REALTIME_MODEL_MINI: "gpt-realtime-2.1-mini"
+  OPENAI_REALTIME_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe"
+  OPENAI_HUD_SUMMARY_MODEL: "gpt-5-nano"
+  OPENAI_REALTIME_VOICE: "marin"
+  OPENAI_REALTIME_REASONING_EFFORT: "low"
+  # Context budget for the realtime voice session. Higher = the assistant
+  # remembers more of the conversation, and costs more per turn.
+  OPENAI_REALTIME_CONTEXT_TOKENS: "3000"
+  OPENAI_REALTIME_CONTEXT_RETENTION: "0.5"
+  # Logs the CONTENT of voice turns when set. Left empty on purpose: it is a
+  # privacy switch, not a verbosity one.
+  GEV_VOICE_LOG_CONTENT: ""
+
+  # ---- Gemini alternative (needs GEMINI_API_KEY in the Secret) -----------
+  GEMINI_CHAT_MODEL: "gemini-3.5-flash-lite"
+  GEMINI_LIVE_MODEL: "gemini-3.8-live"

@@ -1,0 +1,81 @@
+---
+# OpenCharts — the ONE place to configure this app. Fill these in as you go.
+#
+# ================ READ THIS BEFORE EXPECTING A RESTART TO HELP =============
+# THESE ARE BUILD-TIME VALUES, NOT RUNTIME ENVIRONMENT. OpenCharts is a static
+# Vite bundle: it reads config through `import.meta.env`, which Vite INLINES AS
+# LITERAL TEXT INTO THE JS AT BUILD TIME. There is no runtime config.json and
+# nothing reads the environment after the build.
+#
+# So this ConfigMap is deliberately NOT mounted on the Deployment. Doing that
+# would be a silent no-op of the worst kind: the pod restarts cleanly, the
+# values are visibly present in `kubectl exec -- env`, and the app ignores every
+# one of them because they were already compiled away.
+#
+# TO CHANGE ANYTHING HERE: edit it, then REBUILD AND REDEPLOY the image --
+#   applications/opencharts/image/build.sh      (reads this file)
+# then pin the new digest in deployment.yaml. The build is the only path.
+#
+# ---- On secrets: there are none here, by upstream's design ----------------
+# Every VITE_* value is compiled into the public browser bundle, so upstream's
+# .env.example states it outright: "Put NO secrets in VITE_* variables."
+# Anything in this file is readable by anyone who loads the page, which is why a
+# plain ConfigMap is the correct home for all of it -- and why this is safe in a
+# PUBLIC repo in a way that real API keys never would be.
+#
+# The one genuine secret upstream defines, HL_BUILDER_PRIVATE_KEY, belongs to
+# the `npm run builder:claim` operations script, not to the app. It must never
+# appear here or in the cluster; export it for that single command if you ever
+# run it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opencharts-build-config
+  namespace: trading
+  labels:
+    app: opencharts
+data:
+  # ---- Which backend the terminal boots against --------------------------
+  # Empty = the bundled demo adapter: real Binance OHLC baked into the bundle,
+  # replayed forward, against the in-browser paper-trading engine. This is the
+  # current deployment and it needs no configuration at all.
+  # Set to "hyperliquid" to point it at live Hyperliquid perps instead -- that
+  # is REAL MONEY against a real exchange, so treat flipping this as a change
+  # of kind, not a setting.
+  VITE_ADAPTER: ""
+
+  # ---- Hyperliquid, only read when VITE_ADAPTER=hyperliquid --------------
+  # "testnet" is the correct value for anything other than live trading.
+  VITE_HL_NETWORK: "testnet"
+  # Platform-fee ("builder") address; fees accrue here. Empty disables it.
+  VITE_HL_BUILDER_ADDRESS: ""
+  # Fee in TENTHS of a basis point: 100 = 0.10% (HL's perps maximum). Users
+  # approve exactly this rate, so RAISING it later forces every user to
+  # re-approve. Default when unset is 100.
+  VITE_HL_BUILDER_FEE: "100"
+  # Optional remote kill-switch / dynamic fee endpoint. Fetch failures keep the
+  # last known good value (fail-open).
+  VITE_FEE_CONFIG_URL: ""
+
+  # ---- Compliance controls (ADVISORY ONLY) -------------------------------
+  # Upstream is explicit that these are client-side and advisory: enforce the
+  # same rules at the edge if they ever need to actually hold. For a LAN-only
+  # paper terminal they are inert.
+  VITE_GEO_CHECK_URL: ""
+  VITE_GEO_FAIL_MODE: "closed"
+  VITE_BLOCKED_COUNTRIES: ""
+  VITE_SCREEN_URL: ""
+  VITE_SCREEN_FAIL_MODE: "closed"
+
+  # ---- Content Security Policy -------------------------------------------
+  # The bundle ships a strict CSP in a <meta> tag. ANY backend you point an
+  # adapter at must be added here or the browser blocks the connection -- this
+  # is the first thing to check when a custom adapter "silently fails to
+  # connect". Comma/space separated origins.
+  VITE_CSP_EXTRA_CONNECT: ""
+  # Demo only: allows TradingView embed scripts (economic calendar, TA gauge).
+  VITE_CSP_ALLOW_TRADINGVIEW: ""
+
+  # ---- Legacy demo backend; leave empty ----------------------------------
+  # If ever set, its origin must also be added to VITE_CSP_EXTRA_CONNECT.
+  VITE_API_URL: ""
