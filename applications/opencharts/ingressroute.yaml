@@ -1,0 +1,62 @@
+---
+# OpenCharts -- HTTPS on opencharts.talos00.
+# TLS: no `tls:` stanza here on purpose. Kyverno's ingressroute-tls-default
+# injects it, and the default TLSStore serves the talos00 certificate whose SAN
+# list is derived hourly from the cluster's own IngressRoutes -- so creating
+# this object is what puts opencharts.talos00 in the cert.
+#
+# NOT behind forward-auth yet. OpenCharts has no login of its own, but it also
+# holds nothing: no backend, no keys, no server-side state -- a LAN visitor can
+# see a chart and move play money. Gating it is the authentik-lan pattern
+# (middleware ref + a priority-2000 callback in authentik-lan-outpost), which is
+# a separate change; see the note in applications/godseye/ingressroute.yaml,
+# where it matters a great deal more.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: opencharts
+  labels:
+    app: opencharts
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "OpenCharts"
+    gethomepage.dev/description: "Charting + paper-trading terminal"
+    gethomepage.dev/group: "Trading"
+    gethomepage.dev/icon: "mdi-chart-candlestick"
+    gethomepage.dev/siteMonitor: "http://opencharts.trading.svc.cluster.local:8080"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`opencharts.talos00`)
+      kind: Rule
+      middlewares:
+        # Consolidated catalyst navbar, same as every other talos00 app.
+        - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: opencharts
+          port: 8080
+---
+# Separate object for the HTTP redirect. NEVER fold this into the websecure
+# route above: Kyverno injects `tls: {}` into any websecure IngressRoute, which
+# makes the ROUTER TLS-only, so a combined web+websecure object silently 404s
+# on plain HTTP -- and ingressroute-no-combined-entrypoints refuses it outright.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: opencharts-http
+  labels:
+    app: opencharts
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`opencharts.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: opencharts
+          port: 8080

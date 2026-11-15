@@ -1,0 +1,23 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: godseye
+
+resources:
+  - namespace.yaml
+  - pull-secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+  # externalsecret.yaml is DELIBERATELY NOT LISTED YET. ESO raises
+  # SecretSyncedError when the 1Password ITEM is absent (an existing-but-empty
+  # item syncs fine -- see the homepage homeassistant-token note), and this
+  # Kustomization runs `wait: true`, which health-checks every applied object.
+  # So listing it before the item exists would hold the whole app down for keys
+  # none of it needs to boot.
+  #
+  # TO ENABLE: create 1Password item `godseye` in vault catalyst-eso with the
+  # fields listed in externalsecret.yaml (empty values are fine), then add
+  # `- externalsecret.yaml` to this list. The Deployment already consumes the
+  # Secret with `optional: true`, so nothing else changes.

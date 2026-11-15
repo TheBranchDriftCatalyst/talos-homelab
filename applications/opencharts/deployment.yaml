@@ -1,0 +1,91 @@
+---
+# OpenCharts -- the open-source TradingView-alternative terminal
+# (github.com/dylanpersonguy/OpenCharts, MIT, v0.3.0).
+#
+# It is a PURE STATIC SPA: Vite/React, no backend, no API keys, no database.
+# Historical OHLC is baked into the bundle at build time from Binance's public
+# klines endpoint and replayed forward; the paper-trading engine runs entirely
+# in the browser against localStorage. So there is nothing stateful here -- no
+# PVC, and two replicas cost nothing.
+#
+# IMAGE: upstream publishes no container, so this one is built from the pinned
+# upstream commit by applications/opencharts/image/build.sh and pushed to Zot.
+# Digest-pinned: the tag is a convenience, the digest is what actually runs, and
+# re-pointing it is the only way this app's code changes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencharts
+  labels:
+    app: opencharts
+    app.kubernetes.io/name: opencharts
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: opencharts
+  template:
+    metadata:
+      labels:
+        app: opencharts
+        app.kubernetes.io/name: opencharts
+    spec:
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      # Keep the two replicas off one node so a single node drain can never take
+      # the whole app down -- it is stateless, so there is no reason not to.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: opencharts
+      containers:
+        - name: opencharts
+          image: registry.talos00/talos00-registry/opencharts:0.3.0@sha256:82a88b69d9d336b73ae73581a4a6859f4088b2ee43960c51be9ef5339ed1c0ba
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # nginx serving a ~few-MB static bundle. Tiny and flat: it reads from
+          # page cache and does no work per request beyond sendfile.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # readOnlyRootFilesystem: nginx still needs somewhere to write its
+          # temp/pid files, hence the emptyDirs below.
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /tmp
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}

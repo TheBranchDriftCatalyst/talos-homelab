@@ -1,0 +1,126 @@
+---
+# God's Eye View -- live open-source spatial intelligence on a 3D globe
+# (github.com/bilawalsidhu/gods-eye-view, MIT, v0.3.0).
+#
+# ============================ READ THIS FIRST ==============================
+# THE CONTAINER RUNS A VITE DEV SERVER, AND THAT IS UPSTREAM'S DESIGN, not a
+# shortcut taken here. Upstream's own Dockerfile says it outright: "The dev
+# server is the whole app: Vite serves the client AND runs the API proxies
+# (ADS-B, AIS, Overpass, OpenAI Realtime, ...) as middleware, so there is
+# nothing else to containerise." There is no `npm run build` + static-serve
+# path that keeps the data proxies, so do not "fix" this into an nginx image --
+# you would get the globe and lose every live layer.
+#
+# Three consequences follow from that, and all three are load-bearing below:
+#   1. The ROOT FILESYSTEM MUST BE WRITABLE. Vite writes its dependency
+#      optimiser cache to node_modules/.vite on first boot, and the app writes
+#      .gev-cache / .gev-logs into /app. readOnlyRootFilesystem would crash it.
+#   2. FIRST BOOT IS SLOW -- Vite optimises deps for a ~280MB project before it
+#      answers anything. Hence the very generous startupProbe; a normal 30s
+#      budget would restart-loop it forever and look like a broken image.
+#   3. GEV_ALLOWED_HOSTS IS MANDATORY (see env below).
+#
+# IMAGE: upstream publishes no container. Built from upstream's own Dockerfile
+# at the pinned commit by applications/godseye/image/build.sh, pushed to Zot and
+# digest-pinned here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: godseye
+  labels:
+    app: godseye
+    app.kubernetes.io/name: godseye
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: one writable /app with a Vite cache in it, and
+  # nothing to gain from two of them briefly coexisting.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: godseye
+  template:
+    metadata:
+      labels:
+        app: godseye
+        app.kubernetes.io/name: godseye
+    spec:
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
+      securityContext:
+        # `node` in the upstream image. Not root, but not a locked-down
+        # distroless UID either -- it owns /app, which it must write.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: godseye
+          image: registry.talos00/talos00-registry/godseye:0.3.0@sha256:d7a4f7ee6832a9163c742ba57859a1ddc8503976d4ca5bcc8209051525a7e3a4
+          ports:
+            - name: http
+              containerPort: 4173
+              protocol: TCP
+          env:
+            # ---- MANDATORY. Without it every request returns the bare string
+            # "Blocked request. This host is not allowed." Vite's dev server
+            # answers only hostnames it trusts; IPs and localhost are implicit,
+            # named vhosts are not. Leading-dot wildcards are ignored on
+            # purpose, so this must be the EXACT host Traefik passes through.
+            # Change the IngressRoute host and you must change this too.
+            - name: GEV_ALLOWED_HOSTS
+              value: godseye.talos00
+            # ---- The in-app "Provider Settings" key panel trusts the
+            # container's gateway address, because that is where Docker
+            # normally delivers the host's own browser from. In a cluster that
+            # gateway is shared infrastructure, so trusting it would offer the
+            # key panel to anything that can reach the pod network. `none`
+            # disables gateway discovery entirely; keys come from the
+            # environment instead (see externalsecret.yaml).
+            - name: GEV_KEY_SETUP_TRUSTED_PEERS
+              value: "none"
+            - name: PORT
+              value: "4173"
+            - name: HOST
+              value: 0.0.0.0
+          envFrom:
+            # optional: true is what lets this app run with NO keys at all --
+            # the globe still renders, the keyed live layers just stay empty.
+            # It is also why the Secret can be introduced later without
+            # touching this Deployment.
+            - secretRef:
+                name: godseye-providers
+                optional: true
+          # A Vite dev server holding a ~280MB project's module graph in memory.
+          # These are a STARTING ESTIMATE, not a measurement -- nothing has run
+          # long enough to measure. Re-check against 7d of real usage before
+          # trusting them (p50 + headroom over peak, not peak alone).
+          resources:
+            requests:
+              cpu: 200m
+              memory: 768Mi
+            limits:
+              memory: 3Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            # NOT readOnly -- see note 1 in the header. This is deliberate.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          # Generous on purpose: 5s x 90 = 7.5 minutes for Vite's first-run
+          # dependency optimisation. The liveness probe cannot fire until this
+          # one passes, so a slow cold start can never be mistaken for a hang.
+          startupProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 5
+            failureThreshold: 90
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 4

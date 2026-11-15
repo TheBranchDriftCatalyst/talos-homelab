@@ -1,0 +1,84 @@
+---
+# God's Eye View -- HTTPS on godseye.talos00.
+#
+# ===================== SECURITY NOTE, READ BEFORE ADDING KEYS ==============
+# This route is currently UNAUTHENTICATED, and that is only acceptable while
+# the app holds no provider keys. Upstream is explicit about why: the server
+# "brokers whatever provider keys you have configured to anyone who can reach
+# it". Right now there are none (externalsecret.yaml is not yet in the
+# kustomization), so an uninvited LAN visitor gets a globe and nothing else.
+#
+# THE MOMENT A KEY IS ADDED -- a Cesium ion token, and emphatically an
+# OPENAI_API_KEY, which is metered and billable -- this must go behind
+# forward-auth FIRST. That is the authentik-lan pattern and it is a PAIR of
+# edits, never one:
+#   (a) add the `authentik-lan` middleware (namespace authentik) to the route
+#       below, ahead of catalyst-nav so auth runs before the body injector;
+#   (b) add a priority-2000 godseye block to
+#       infrastructure/base/authentik-lan-outpost/app-callbacks.yaml.
+# Do (a) without (b) and the auth check is answered by talos00-outpost while
+# the callback is answered by the embedded outpost, which never issued that
+# state -- the flow 400s or loops and looks exactly like broken middleware.
+# A provider + application entry in the Authentik blueprint is also required,
+# or the app 404s at the outpost.
+#
+# TLS: no `tls:` stanza -- Kyverno's ingressroute-tls-default injects it, and
+# this object existing is what adds godseye.talos00 to the talos00 cert, whose
+# SAN list is derived hourly from the cluster's own IngressRoutes.
+#
+# PROXY HEADERS: the app compares the browser's Origin against the Host the
+# server sees, and needs X-Forwarded-Proto when TLS terminates upstream.
+# Traefik forwards the original Host and sets X-Forwarded-Proto/-For by
+# default, so no middleware is needed -- but do not add anything that rewrites
+# Host, or the map routes will start refusing requests.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: godseye
+  labels:
+    app: godseye
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "God's Eye View"
+    gethomepage.dev/description: "Live flights, ships and satellites on a 3D globe"
+    gethomepage.dev/group: "Tools"
+    gethomepage.dev/icon: "mdi-earth"
+    gethomepage.dev/siteMonitor: "http://godseye.godseye.svc.cluster.local:4173"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`godseye.talos00`)
+      kind: Rule
+      middlewares:
+        # Consolidated catalyst navbar. Last in the chain so that when
+        # forward-auth is added above it, auth still runs first and the body
+        # injector only ever rewrites an already-authorised response.
+        - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: godseye
+          port: 4173
+---
+# Separate object for the HTTP redirect. NEVER fold this into the websecure
+# route: Kyverno injects `tls: {}` into any websecure IngressRoute, making the
+# router TLS-only, so a combined web+websecure object silently 404s on plain
+# HTTP -- and ingressroute-no-combined-entrypoints refuses it outright.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: godseye-http
+  labels:
+    app: godseye
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`godseye.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: godseye
+          port: 4173
