@@ -219,6 +219,30 @@ spec:
             # picker cannot wander the container root.
             - name: LIBRARY_BROWSE_ROOT
               value: /library
+            # ---- OIDC -----------------------------------------------------------
+            # REQUIRED here, and the single thing that makes Authentik SSO work at
+            # all in this cluster. OidcDiscoveryService runs an SSRF guard
+            # (ensureSafeUrl) over every endpoint it reads out of the discovery
+            # document, and the guard is armed whenever
+            #   allowPrivateOidcIssuers = !isProduction || oidcAllowLocalIssuers
+            # is false -- i.e. always, under NODE_ENV=production above.
+            #
+            # Kyverno's oidc-hostalias mutation deliberately pins
+            # auth.knowledgedump.space to the in-cluster Traefik ClusterIP so the
+            # pod never hairpins out to the LAN. That address is RFC1918, so the
+            # guard rejects token_endpoint / jwks_uri / userinfo_endpoint with
+            # PrivateAddressException, getDiscoveryDoc throws "Failed to reach OIDC
+            # provider", and generateState 500s -- the browser shows only
+            # "Failed to generate state", with the real cause visible nowhere but
+            # the pod log. The network path itself is fine; this is purely the
+            # app's own egress policy disagreeing with the hostAlias.
+            #
+            # Scope of the relaxation is narrow: the flag is read ONLY by
+            # oidc-discovery.service.js (verified: it is the sole allowLocal /
+            # allowPrivate call site in dist/modules/auth/oidc/), so it loosens
+            # nothing outside endpoints that came from our own issuer.
+            - name: OIDC_ALLOW_LOCAL_ISSUERS
+              value: "true"
             # ---- runtime --------------------------------------------------------
             # Coherent with the 2Gi memory limit below: Node's old-space cap is set
             # to 1536Mi, leaving ~512Mi of headroom for non-heap (native buffers

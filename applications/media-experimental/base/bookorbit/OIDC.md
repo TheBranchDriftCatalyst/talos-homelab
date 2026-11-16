@@ -28,12 +28,58 @@ from `.well-known/openid-configuration`.
 The only OIDC *env* vars are runtime tuning — `OIDC_STATE_TTL_SECS`,
 `OIDC_DISCOVERY_CACHE_TTL_SECS`, `OIDC_JWKS_CACHE_TTL_SECS`,
 `OIDC_CLOCK_TOLERANCE_SECS`, `OIDC_TOKEN_EXCHANGE_TIMEOUT_MS`,
-`OIDC_ALLOW_LOCAL_ISSUERS`. None of them configure a provider, so none are set.
+`OIDC_ALLOW_LOCAL_ISSUERS`. None of them configure a provider, so only one is set
+— `OIDC_ALLOW_LOCAL_ISSUERS=true`, which is **mandatory here**; see "The SSRF guard"
+below.
 
 Consequence: an Authentik blueprint alone would create a provider that nothing
 consumes. That is the "half-configured app that appears to work" case, so the
 Authentik side was **not** added either — both halves should land together, in one
 deliberate pass.
+
+## The SSRF guard — why `OIDC_ALLOW_LOCAL_ISSUERS=true` is mandatory
+
+Symptom when it is missing: the login page says only **"Failed to generate state"**.
+Nothing else surfaces it — the Authentik side is healthy, the provider row is correct,
+and the discovery URL is reachable from inside the pod. The real error appears only in
+the BookOrbit pod log:
+
+```
+[auth.oidc_discovery] [fail] issuerUri=https://auth.knowledgedump.space/application/o/bookorbit
+  errorClass=PrivateAddressException error="URL resolves to a private or local address"
+InternalServerErrorException: Failed to reach OIDC provider
+    at OidcDiscoveryService.getDiscoveryDoc (dist/modules/auth/oidc/oidc-discovery.service.js:81)
+    at async OidcService.generateState (dist/modules/auth/oidc/oidc.service.js:67)
+```
+
+`OidcDiscoveryService` fetches the discovery document and then runs `ensureSafeUrl`
+over `token_endpoint`, `jwks_uri`, `userinfo_endpoint` and `end_session_endpoint`. The
+guard is armed unless
+
+```js
+allowPrivateOidcIssuers = !isProduction || config.app.oidcAllowLocalIssuers === true
+```
+
+and `NODE_ENV=production`, so with the flag unset it is always on.
+
+This collides head-on with the Kyverno `oidc-hostalias` mutation, which is doing its
+job: it pins `auth.knowledgedump.space` to the in-cluster Traefik ClusterIP
+(`10.103.83.240`) precisely so the pod does not hairpin out to the LAN. That address
+is RFC1918 — private by definition — so every endpoint in our own discovery document
+trips the guard. **The outer fetch succeeds**; it is the post-fetch endpoint validation
+that fails, which is why a `wget` of the discovery URL from inside the pod proves
+nothing about this failure mode.
+
+The relaxation is narrow. `oidcAllowLocalIssuers` is read by
+`oidc-discovery.service.js` and nowhere else — it is the only `allowLocal` /
+`allowPrivate` call site under `dist/modules/auth/oidc/` — so it loosens nothing beyond
+endpoints that came from our own issuer. The token exchange does not re-apply the guard.
+
+Accepted values are `true` / `1` / `yes` / `on`; anything else fails zod validation at
+boot (`booleanEnvFlag`). The var lives in `deployment.yaml`, not here.
+
+Any other app in this cluster that validates issuer endpoints against private ranges
+will hit the same wall for the same reason, and will need its own equivalent opt-out.
 
 ## What is already done (git-managed)
 
