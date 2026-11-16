@@ -1,0 +1,155 @@
+---
+# MinIO availability alerts — born from TALOS-d9pm.
+#
+# THE GAP THESE CLOSE. MinIO retired free community distribution, and for weeks
+# the server image existed on exactly ONE node's containerd cache while 23 CNPG
+# ObjectStores archived their WAL to it. Nothing alerted on any of it: there was
+# a MinIOClientErrorSurge rule (4xx auth drift) but NOTHING for "MinIO is simply
+# not there", and nothing for the mc CronJobs failing. The condition was found by
+# a human reading `talosctl image ls`.
+#
+# READ THIS BEFORE TRUSTING THESE RULES: THE ALERT PATH IS PARTLY SELF-BLINDING.
+# These rules evaluate in the Mimir ruler, and Mimir's own blocks storage IS
+# MinIO. So a total MinIO outage degrades the very pipeline that would report it
+# -- ingesters fail on "Unable to successfully connect to configured object
+# storage", and the ruler and Alertmanager go with them. Expect these to fire for
+# a DEGRADED or PARTIAL MinIO failure (pod not ready, scrape target gone,
+# CronJobs stale) and NOT to be your safety net for a total one.
+#
+# The backstop for the total case already exists and is deliberately out-of-band:
+# the Watchdog dead-man's-switch in alertmanager-config/config-template.yaml
+# pings an external heartbeat URL, so when the whole pipeline dies the EXTERNAL
+# observer notices the silence. That path does not depend on MinIO. Do not
+# "improve" these rules into a substitute for it.
+#
+# GROUNDING. Every expression below was executed against the live
+# mimir-query-frontend (X-Scope-OrgID: anonymous) on 2026-11-16 and returned 0
+# series on a healthy cluster, AND was mutation-tested by inverting its condition
+# to confirm the selector matches real data (a typo'd metric name also returns 0,
+# which is how a rule silently never fires). Measured at that time:
+#   up{job="minio"}                                     = 1   (single series)
+#   kube_statefulset_status_replicas_ready{minio-pool-0} = 1
+#   last-success age: etcd-backup 812s, scoped-users 3075s, cnpg-backup 3436s
+# All three CronJobs are hourly (0, 17 and 23 past), so the 9000s (2.5h)
+# staleness threshold allows two consecutive misses before firing.
+#
+# Every kube_* selector pins job="kube-state-metrics" on purpose: a second,
+# stale KSM scrape reports the WRONG namespace on long lookbacks
+# (ksm-stale-dual-scrape-namespace-trap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: minio-availability-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: minio-availability-alerts
+    app.kubernetes.io/component: alerting
+spec:
+  groups:
+    - name: minio.availability
+      rules:
+        # The scrape target vanished entirely -- Service has no endpoints, or the
+        # Tenant/ServiceMonitor is gone. Distinct from `up == 0` (below), which
+        # needs the endpoint to still exist in order to fail.
+        - alert: MinIOScrapeTargetAbsent
+          expr: |
+            absent(up{job="minio"})
+          for: 10m
+          labels:
+            severity: critical
+            component: object-storage
+          annotations:
+            summary: "MinIO scrape target has disappeared"
+            description: >-
+              No `up{job="minio"}` series for 10m: the MinIO Service has no ready
+              endpoints, or the Tenant/ServiceMonitor was removed. MinIO backs
+              Velero, the CNPG barman WAL archive (23 ObjectStores) and Loki/Mimir
+              object storage, so Postgres WAL archiving is on a multi-hour pg_wal
+              fuse from here. Check `kubectl get tenant,pods -n minio`; if a pod is
+              ImagePullBackOff see MinIOImagePullFailing and TALOS-d9pm -- the image
+              is mirrored in Zot and needs the nexus-pull-dockercfg pull secret.
+
+        # Endpoint exists but scrapes fail: MinIO process wedged, or listening and
+        # refusing. Covers the "probe returns 200 while the app is broken" gap only
+        # partially -- a scrape success is still not proof of a working S3 path.
+        - alert: MinIODown
+          expr: |
+            up{job="minio"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            component: object-storage
+          annotations:
+            summary: "MinIO is failing its scrape"
+            description: >-
+              `up{job="minio"}` has been 0 for 10m. Same blast radius as
+              MinIOScrapeTargetAbsent: Velero, 23 CNPG ObjectStores and the
+              Loki/Mimir object store all depend on this one Tenant.
+
+        # Pool pod not ready. Catches ImagePullBackOff, scheduling failure and
+        # crash loops even while a stale scrape target lingers.
+        - alert: MinIOPoolNotReady
+          expr: |
+            kube_statefulset_status_replicas_ready{job="kube-state-metrics",namespace="minio",statefulset="minio-pool-0"} < 1
+          for: 15m
+          labels:
+            severity: critical
+            component: object-storage
+          annotations:
+            summary: "MinIO pool-0 has no ready replica"
+            description: >-
+              minio-pool-0 has had 0 ready replicas for 15m. This is a single-server
+              Tenant, so there is no redundancy: the pool being down IS MinIO being
+              down. Check scheduling first (it is intentionally NOT pinned to a node
+              any more -- TALOS-d9pm) and the image pull second.
+
+    - name: minio.provisioning
+      rules:
+        # The mc-based CronJobs reconcile scoped users and the CNPG backup
+        # credential. When they stop succeeding, credentials drift silently and
+        # surface later as a fleet-wide SignatureDoesNotMatch storm
+        # (eso-generator-rotation-gotcha).
+        #
+        # Deliberately keyed on LAST SUCCESS AGE, not kube_job_status_failed.
+        # Measured 2026-11-16: `kube_job_status_failed > 0` returns 6 series for
+        # BackoffLimitExceeded Jobs from ~9.7 days ago while all three CronJobs
+        # were succeeding hourly. A failure-count rule would therefore page
+        # permanently on ancient history and be muted within a day.
+        - alert: MinIOProvisionCronJobStale
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace=~"minio|backup"}) > 9000
+          for: 15m
+          labels:
+            severity: warning
+            component: object-storage
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.cronjob }} has not succeeded in {{ $value | humanizeDuration }}"
+            description: >-
+              This CronJob runs hourly and has missed at least two consecutive runs.
+              For scoped-users/cnpg-backup provisioning that means MinIO credentials
+              are drifting from what ESO has issued; force a run with
+              `kubectl create job --from=cronjob/{{ $labels.cronjob }} -n {{ $labels.namespace }} manual-$(date +%s)`.
+              For etcd-backup it means no fresh etcd snapshot is reaching S3.
+
+    - name: workload.imagepull
+      rules:
+        # The generic failure class behind TALOS-d9pm. An image that has silently
+        # become unpullable upstream is invisible until something reschedules --
+        # and then it is an outage, not a warning. 15m tolerates normal pulls of
+        # large images while still catching a real backoff.
+        - alert: MinIOImagePullFailing
+          expr: |
+            kube_pod_container_status_waiting_reason{job="kube-state-metrics",reason=~"ImagePullBackOff|ErrImagePull"} > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: workloads
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} cannot pull its image ({{ $labels.reason }})"
+            description: >-
+              Container image pull has been failing for 15m. Two causes dominate
+              here: an upstream registry that gated or deleted the tag (MinIO did
+              exactly this -- see TALOS-d9pm), or a missing namespaced
+              imagePullSecret for registry.talos00, which has no anonymousPolicy
+              and so 401s anonymous pulls. Check
+              `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}`.
