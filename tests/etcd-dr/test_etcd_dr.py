@@ -47,7 +47,13 @@ MAX_SNAPSHOT_AGE_S = float(os.environ.get("ETCD_MAX_SNAPSHOT_AGE_S", "3600"))
 MAX_CRONJOB_SINCE_SCHEDULED_S = float(os.environ.get("ETCD_MAX_SINCE_SCHEDULED_S", "7200"))
 MIN_SNAPSHOT_BYTES = int(os.environ.get("ETCD_MIN_SNAPSHOT_BYTES", "1048576"))
 MAX_SNAPSHOT_WALL_S = float(os.environ.get("ETCD_MAX_SNAPSHOT_WALL_S", "120"))
-MC_IMAGE = os.environ.get("ETCD_MC_IMAGE", "quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z")
+# Mirrored into Zot -- quay.io/minio/mc is 401 for this pinned tag (TALOS-d9pm).
+MC_IMAGE = os.environ.get(
+    "ETCD_MC_IMAGE", "registry.talos00/talos00-registry/mc:RELEASE.2024-11-21T17-21-54Z")
+# Zot has no anonymousPolicy, and `kubectl run` attaches no pull secret of its own,
+# so it has to be injected via --overrides or every throwaway mc pod ImagePullBackOffs.
+MC_PULL_SECRET = os.environ.get("ETCD_MC_PULL_SECRET", "nexus-pull-dockercfg")
+MC_OVERRIDES = json.dumps({"spec": {"imagePullSecrets": [{"name": MC_PULL_SECRET}]}})
 BBOLT_MAGIC_LE = "edda0ced"
 DESTRUCTIVE_ENV = "ETCD_DR_DESTRUCTIVE"
 
@@ -100,6 +106,7 @@ def mc(mc_args, timeout=90):
     name = f"etcddr-mc-{int(time.time() * 1000)}"
     script = f'mc alias set b "{S3_ENDPOINT}" "$AK" "$SK" >/dev/null 2>&1; {mc_args}'
     cmd = (f"run {name} -n {NS} --rm -i --restart=Never --image={MC_IMAGE} "
+           f"--overrides={shlex.quote(MC_OVERRIDES)} "
            f"--env {shlex.quote('AK=' + ak)} --env {shlex.quote('SK=' + sk)} "
            f"--command -- sh -c {shlex.quote(script)}")
     return dr.kubectl(cmd, timeout=timeout)
@@ -135,6 +142,7 @@ def stored_snapshot_integrity(key):
         'echo BYTES=$(wc -c < /tmp/s.db); '
         'echo MAGIC=$(od -An -tx1 -N32 /tmp/s.db | tr -dc 0-9a-f)')
     cmd = (f"run {name} -n {NS} --rm -i --restart=Never --image={MC_IMAGE} "
+           f"--overrides={shlex.quote(MC_OVERRIDES)} "
            f"--env {shlex.quote('AK=' + ak)} --env {shlex.quote('SK=' + sk)} "
            f"--command -- sh -c {shlex.quote(script)}")
     o = dr.kubectl(cmd, timeout=120)

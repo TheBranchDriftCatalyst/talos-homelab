@@ -12,6 +12,7 @@ S3 recovery wall-time. All S3 I/O runs through an ephemeral in-cluster minio/mc 
 Needs `kubectl` (context = the cluster) on PATH.
 """
 import base64
+import json
 import os
 import re
 import shlex
@@ -37,7 +38,13 @@ TENANT_SELECTOR = os.environ.get("MINIO_TENANT_LABEL", "v1.min.io/tenant=minio")
 CORE_BUCKETS = [b.strip() for b in os.environ.get(
     "MINIO_CORE_BUCKETS", "mimir,loki,velero,cnpg-backups").split(",") if b.strip()]
 CANARY_BUCKET = os.environ.get("MINIO_CANARY_BUCKET", "minio-dr-canary")
-MC_IMAGE = os.environ.get("MINIO_MC_IMAGE", "quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z")
+# Mirrored into Zot -- quay.io/minio/mc is 401 for this pinned tag (TALOS-d9pm).
+MC_IMAGE = os.environ.get(
+    "MINIO_MC_IMAGE", "registry.talos00/talos00-registry/mc:RELEASE.2024-11-21T17-21-54Z")
+# Zot has no anonymousPolicy, and `kubectl run` attaches no pull secret of its own,
+# so it has to be injected via --overrides or every throwaway mc pod ImagePullBackOffs.
+MC_PULL_SECRET = os.environ.get("MINIO_MC_PULL_SECRET", "nexus-pull-dockercfg")
+MC_OVERRIDES = json.dumps({"spec": {"imagePullSecrets": [{"name": MC_PULL_SECRET}]}})
 MAX_RECOVERY_S = float(os.environ.get("MINIO_MAX_RECOVERY_S", "180"))
 DESTRUCTIVE_ENV = "MINIO_DR_DESTRUCTIVE"
 
@@ -93,6 +100,7 @@ def mc_run(script, timeout=120):
              f'mc alias set local {ENDPOINT} "$AK" "$SK" --api S3v4 >/dev/null 2>&1 || '
              '{ echo __MC_ALIAS_FAIL__; exit 40; }\n' + script)
     cmd = (f"run {name} -n {NS} --rm -i --restart=Never --image={MC_IMAGE} "
+           f"--overrides={shlex.quote(MC_OVERRIDES)} "
            f"--env=AK={shlex.quote(access)} --env=SK={shlex.quote(secret)} "
            f"--command -- sh -c {shlex.quote(inner)}")
     return dr.kubectl(cmd, timeout=timeout)

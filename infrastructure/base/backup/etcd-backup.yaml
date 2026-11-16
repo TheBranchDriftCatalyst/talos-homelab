@@ -53,6 +53,10 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          # Zot has no anonymousPolicy -- every registry.talos00 pull needs
+          # credentials. Delivered by infrastructure/base/backup/pull-secret.yaml.
+          imagePullSecrets:
+            - name: nexus-pull-dockercfg
           securityContext:
             runAsNonRoot: false
             seccompProfile:
@@ -86,7 +90,8 @@ spec:
                   memory: 256Mi
           containers:
             - name: upload
-              image: quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z
+              # Mirrored into Zot; quay.io/minio/mc is 401 for this tag too. TALOS-d9pm.
+              image: registry.talos00/talos00-registry/mc:RELEASE.2024-11-21T17-21-54Z
               envFrom:
                 - configMapRef:
                     name: etcd-backup-config

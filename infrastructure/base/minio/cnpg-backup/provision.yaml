@@ -24,6 +24,9 @@ spec:
             app.kubernetes.io/name: cnpg-backup-provision
         spec:
           restartPolicy: OnFailure
+          # Zot has no anonymousPolicy -- every registry.talos00 pull needs credentials.
+          imagePullSecrets:
+            - name: nexus-pull-dockercfg
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -31,10 +34,12 @@ spec:
             seccompProfile: {type: RuntimeDefault}
           containers:
             - name: mc
-              image: quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z
-              # Tag is immutable-pinned (dw2p) — was :latest, now gone from Docker Hub. IfNotPresent is
-              # therefore safe (no version drift) AND avoids failing fresh docker.io pulls (anonymous
-              # limit denials); the node-cached image IS the pinned version. (supersedes TALOS-6gnx)
+              # Mirrored into Zot (TALOS-d9pm). quay.io/minio/mc is 401 for this pinned
+              # tag as well, so relying on a node-cached copy was a latent outage: only
+              # talos02-gpu and talos06 had it, and containerd has since GC-ed the
+              # layers so it could not be re-exported from any other node.
+              image: registry.talos00/talos00-registry/mc:RELEASE.2024-11-21T17-21-54Z
+              # Tag is immutable-pinned (dw2p) — safe with IfNotPresent, no version drift.
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false

@@ -146,44 +146,67 @@ spec:
   # "Unable to successfully connect to configured object storage". So MinIO must
   # outrank the workloads that depend on it.
   #
-  # It also cannot move: the only copy of its image left anywhere reachable is in
-  # talos06's containerd cache (see the nodeSelector on pool-0 and TALOS-fxo2.4),
-  # and talos06 was 100% committed on memory. Without a priority class MinIO just
-  # sat Pending behind priority-0 pods on the one node it is allowed to run on.
-  # platform-data lets it preempt them instead. TALOS-fxo2.
+  # It used to also be unable to move -- the only copy of its image left anywhere
+  # reachable was talos06's containerd cache. That is fixed (TALOS-d9pm): the image
+  # now lives in Zot and the pool-0 nodeSelector is gone. The priority class stays
+  # because the dependency ordering above is unchanged: MinIO must outrank the
+  # workloads that depend on it, and whichever node it lands on may be fully
+  # committed on memory. platform-data lets it preempt instead of sitting Pending.
+  # TALOS-fxo2.
   priorityClassName: platform-data
   # Tenant configuration secret
   configuration:
     name: minio-env-config
 
   # Image configuration
-  image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+  #
+  # MIRRORED INTO ZOT, NOT PULLED FROM UPSTREAM. MinIO retired free community
+  # distribution (~2026-09-28): quay.io/minio/minio returns 401 and
+  # docker.io/minio/minio returns insufficient_scope, for THIS pinned tag as much
+  # as for :latest. This ref is the rescued copy. TALOS-d9pm.
+  #
+  # NOT byte-identical to the upstream manifest, and it cannot be: by the time the
+  # rescue ran, containerd had already garbage-collected every compressed layer
+  # blob (discard_unpacked_layers), leaving only the manifest, the config and the
+  # unpacked snapshot. So the rootfs was re-tarred from that snapshot as a single
+  # squashed layer and recombined with the ORIGINAL, unmodified image config --
+  # same entrypoint, cmd, env, exposed ports, volumes and labels. Verified by
+  # running `minio --version` from this ref on talos03: RELEASE.2024-11-07T00-52-20Z,
+  # commit cefc43e4daa4cbb490ef6726ea374e26a93eb85e, linux/amd64.
+  #
+  # Upstream provenance is recorded in the manifest annotations under
+  # homelab.talos/source-*; the source index was
+  # sha256:ac591851803a79aee64bc37f66d77c56b0a4b6e12d9e5356380f4105510f2332.
+  #
+  # This release is EOL. Replacing it (cgr.dev/chainguard/minio, already mirrored
+  # to this repo as the `chainguard` tag, or AIStor) is a deliberate version jump
+  # across 23 CNPG ObjectStores and is tracked separately -- do NOT conflate it
+  # with this de-risking mirror.
+  image: registry.talos00/talos00-registry/minio:RELEASE.2024-11-07T00-52-20Z
   imagePullPolicy: IfNotPresent
+  # Zot has no anonymousPolicy, so every registry.talos00 pull needs credentials.
+  # Delivered by infrastructure/base/minio/pull-secret.yaml (ExternalSecret).
+  imagePullSecret:
+    name: nexus-pull-dockercfg
 
   # Pool configuration - single server for homelab
   pools:
     - name: pool-0
-      # PINNED TO talos06 OUT OF NECESSITY, NOT PREFERENCE. TALOS-fxo2.
+      # NO nodeSelector -- deliberately. It used to pin this pool to talos06, which
+      # held the ONLY reachable copy of the server image in its containerd cache.
+      # That pin was a stay of execution: it made a single node's disk the sole
+      # custodian of the image behind Velero, the CNPG barman WAL archive and
+      # Loki/Mimir object storage, and it blocked the talos06 Talos upgrade (an
+      # upgrade could have evicted the cache).
       #
-      # The image this Tenant requests NO LONGER EXISTS UPSTREAM. Verified
-      # 2026-11-06: quay.io/minio/minio returns 401 UNAUTHORIZED for this tag and
-      # its API reports ZERO active tags for the repo; a real in-cluster pull of
-      # docker.io/minio/minio at the same tag also fails to resolve. The only copy
-      # reachable from this cluster is the one already in talos06's containerd
-      # cache (`talosctl -n 192.168.1.19 image ls` -- and it is on that node ONLY).
+      # TALOS-d9pm removed the need for it by mirroring the image into Zot. Proof
+      # before removal: a pod pulling THIS ref ran to completion on talos03 -- a
+      # node that had never held any MinIO image -- with a 1.63s registry pull and
+      # a resolved imageID of
+      # sha256:3f40bc371b820b7d63be3f95097ca20d4a155663dbb9dd05a747566d925881ff.
       #
-      # MinIO therefore cannot be scheduled anywhere else. Before the cold boot it
-      # ran wherever its cache happened to be; the reboot moved it to a node with no
-      # cache and it went ImagePullBackOff, which also broke Velero (its kopia
-      # maintenance jobs failed and regrew to 55, eating the capacity that starved
-      # authentik-postgres).
-      #
-      # THIS PIN IS A STAY OF EXECUTION, NOT A FIX. If talos06's cache is pruned or
-      # that node is rebuilt, MinIO is unrecoverable from upstream -- and MinIO backs
-      # Velero, the CNPG barman WAL archive, and Loki/Mimir object storage. Mirror
-      # the cached image into zot and repoint this, then remove the nodeSelector.
-      nodeSelector:
-        kubernetes.io/hostname: talos06
+      # Do not re-add a hostname pin here. If MinIO cannot schedule, the cause is
+      # capacity or the pull secret, not image locality.
       servers: 1
       volumesPerServer: 1
       volumeClaimTemplate:
@@ -282,9 +305,13 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      # Zot has no anonymousPolicy -- every registry.talos00 pull needs credentials.
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
       containers:
         - name: mc
-          image: quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z
+          # Mirrored into Zot; quay.io/minio/mc is 401 for this tag too. TALOS-d9pm.
+          image: registry.talos00/talos00-registry/mc:RELEASE.2024-11-21T17-21-54Z
           envFrom:
             # Root creds (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) from 1Password
             # via the minio-root-credentials ExternalSecret above.
