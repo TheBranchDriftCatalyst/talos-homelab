@@ -103,6 +103,39 @@ provisioner: rancher.io/local-path
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
 ---
+# Same provisioner, same node-local paths, but the volume SURVIVES its claim.
+#
+# WHY THIS EXISTS. `local-path` above reclaims Delete, so deleting a PVC destroys
+# the data with no confirmation and no trace. That is correct for the overwhelming
+# majority of local-path volumes here, which hold caches and rebuildable state --
+# but it has already caused silent data loss twice: CrowdSec's LAPI lost every
+# registered machine to a PVC recreate, and Zot (which holds the ONLY retrievable
+# copy of two container images whose upstream no longer exists) sat on a Delete
+# volume until 2026-11-16.
+#
+# Use this class for a local-path volume whose contents cannot be re-derived from
+# git, from an upstream registry, or from a backup. If it CAN be re-derived, prefer
+# `local-path` -- a Retain volume leaves a Released PV behind that someone has to
+# clean up by hand, and that cost is only worth paying for irreplaceable data.
+#
+# NOT the default class: `local-path` keeps that annotation deliberately, so this
+# one is only ever used by a PVC that names it.
+#
+# MIGRATION IS NOT IN-PLACE. `storageClassName` is immutable on a bound PVC, so an
+# existing volume cannot be moved here by editing the manifest -- Kubernetes will
+# reject the apply and the Kustomization will fail until it is reverted. Moving a
+# live volume means: provision a new PVC on this class, copy the data, repoint the
+# workload, delete the old PVC. For a volume that is already bound, patching the PV
+# alone (`persistentVolumeReclaimPolicy: Retain`) gets the same protection for that
+# one volume without downtime -- which is what zot-data has today.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path-retain
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
 kind: ConfigMap
 apiVersion: v1
 metadata:
