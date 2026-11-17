@@ -215,6 +215,15 @@ spec:
             # "platform manages /data ownership" case, which fsGroup above does.
             - name: BOOKORBIT_FIX_PERMISSIONS
               value: "false"
+            # Staging area a fulfilled book request is filed through. Defaults to
+            # <APP_DATA_PATH>/book-dock, which lands on the appdata export and is a
+            # DIFFERENT mount from the completed downloads — link(2) then returns
+            # EXDEV and request-import.service silently falls back to copyFile, so
+            # every fulfilment uses the disk twice. Keeping the dock inside the
+            # downloads-complete mount makes the hardlink succeed instead.
+            # Dot-prefixed so SABnzbd/qbittorrent category scans skip it.
+            - name: BOOK_DOCK_PATH
+              value: /downloads/complete/.book-dock
             # Confine the in-app library browser to the mounted libraries so the
             # picker cannot wander the container root.
             - name: LIBRARY_BROWSE_ROOT
@@ -268,6 +277,14 @@ spec:
               mountPath: /library/audiobooks
             - name: comics
               mountPath: /library/comics
+            # Download client landing zone. Same Synology export sabnzbd and
+            # qbittorrent mount at /downloads/complete in the media namespace
+            # (192.168.1.36:/volume1/downloads/complete, RWX), so the Requests
+            # path mapping is the identity case /downloads/complete ->
+            # /downloads/complete. Without this mount BookOrbit reports
+            # "cannot see that path" and import never runs.
+            - name: downloads
+              mountPath: /downloads/complete
             # Read-only rootfs — upstream's compose runs the same way, writable at
             # /tmp and /data only.
             - name: tmp
@@ -318,5 +335,8 @@ spec:
         - name: comics
           persistentVolumeClaim:
             claimName: comics
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: downloads-complete
         - name: tmp
           emptyDir: {}
