@@ -768,7 +768,12 @@ class UpgradeOrchestrator:
         cmd = [
             "talosctl", "--talosconfig", self.talosconfig,
             "--nodes", node.ip, "upgrade",
-            "--image", image, "--wait", "--preserve=true",
+            # No --preserve: Talos >= 1.8 never wipes the system disk on upgrade,
+            # so EPHEMERAL (and every local-path volume on it) survives by
+            # default. The flag survived only for the --legacy fallback path and
+            # is REMOVED from talosctl in 1.18 -- passing it then makes every
+            # upgrade in this script die on "unknown flag" before touching a node.
+            "--image", image, "--wait",
         ]
         if self.force_drain:
             cmd.append("--force")
