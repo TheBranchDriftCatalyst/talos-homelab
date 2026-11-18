@@ -1,6 +1,6 @@
 module grpc-example
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
