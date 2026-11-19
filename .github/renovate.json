@@ -49,27 +49,27 @@
       "automerge": true
     },
     {
-      "description": "Group all Docker/container image bumps into one PR",
+      "description": "All non-major container image bumps land in ONE PR, and NEVER automerge. Flux reconciles main, so merging an image bump here deploys it: there is no staging step between the merge button and production. Fine for a go.mod bump, not fine for a container serving traffic, so a human presses the button. Scoped to non-major so majors fall through to the rule below and stay on their own.",
       "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "container images",
-      "automerge": true
-    },
-    {
-      "description": "Isolate major updates so each gets its own review",
-      "matchUpdateTypes": ["major"],
-      "labels": ["dependencies", "major-update"],
       "automerge": false
     },
     {
-      "description": "Apps that run irreversible schema migrations on boot NEVER automerge, not even a patch. Flux reconciles main, so an automerged bump here deploys itself, and BookOrbit applies forward migrations against its live database as the new pod starts. The image rolls back, the schema does not: a 3.5.0 binary against a 3.9.0 schema will not start. These need a human who has taken a backup first, the way bookorbit-pre-3-5-0 and bookorbit-pre-latest-upgrade were taken. Without this rule the two automerge:true rules above would cover them.",
+      "description": "Isolate major updates so each gets its own review. groupName null keeps a major OUT of the grouped PRs above, which it would otherwise inherit, because Renovate merges every matching rule rather than applying only the last one.",
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "major-update"],
+      "groupName": null,
+      "automerge": false
+    },
+    {
+      "description": "Apps that run irreversible schema migrations on boot. Nothing above automerges images any more, so this no longer exists to block that; it exists to LABEL the PR, so whoever reviews the grouped image PR can see it contains something that will migrate a live database on the next pod start. BookOrbit applies forward migrations as the new pod boots: the image rolls back, the schema does not, and a 3.5.0 binary against a 3.9.0 schema will not start. Take a backup first, the way bookorbit-pre-3-5-0 and bookorbit-pre-latest-upgrade were. Deliberately does NOT set groupName, so these stay inside the single grouped PR instead of fragmenting it.",
       "matchPackageNames": [
         "ghcr.io/bookorbit/bookorbit",
         "ghcr.io/advplyr/audiobookshelf"
       ],
       "automerge": false,
-      "labels": ["dependencies", "stateful-migration", "needs-backup"],
-      "separateMinorPatch": true,
-      "groupName": null
+      "addLabels": ["stateful-migration", "needs-backup"]
     }
   ]
 }
