@@ -12,6 +12,23 @@
   "prHourlyLimit": 0,
   "labels": ["dependencies"],
   "rangeStrategy": "bump",
+  "kubernetes": {
+    "description": "The kubernetes manager ships NO default file matching, because a .yaml file could be anything. Without these patterns Renovate never reads a single `image:` line in this repo, which is how bookorbit sat on 3.5.0 while four upstream releases shipped and Renovate kept bumping go.mod.",
+    "fileMatch": [
+      "^applications/.+\\.ya?ml$",
+      "^infrastructure/.+\\.ya?ml$"
+    ]
+  },
+  "kustomize": {
+    "description": "A separate manager on purpose: an image pinned through a kustomization.yaml `images:` transformer is invisible to the kubernetes manager above.",
+    "fileMatch": ["(^|/)kustomization\\.ya?ml$"]
+  },
+  "flux": {
+    "fileMatch": [
+      "^applications/.+\\.ya?ml$",
+      "^infrastructure/.+\\.ya?ml$"
+    ]
+  },
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"],
@@ -42,6 +59,17 @@
       "matchUpdateTypes": ["major"],
       "labels": ["dependencies", "major-update"],
       "automerge": false
+    },
+    {
+      "description": "Apps that run irreversible schema migrations on boot NEVER automerge, not even a patch. Flux reconciles main, so an automerged bump here deploys itself, and BookOrbit applies forward migrations against its live database as the new pod starts. The image rolls back, the schema does not: a 3.5.0 binary against a 3.9.0 schema will not start. These need a human who has taken a backup first, the way bookorbit-pre-3-5-0 and bookorbit-pre-latest-upgrade were taken. Without this rule the two automerge:true rules above would cover them.",
+      "matchPackageNames": [
+        "ghcr.io/bookorbit/bookorbit",
+        "ghcr.io/advplyr/audiobookshelf"
+      ],
+      "automerge": false,
+      "labels": ["dependencies", "stateful-migration", "needs-backup"],
+      "separateMinorPatch": true,
+      "groupName": null
     }
   ]
 }
