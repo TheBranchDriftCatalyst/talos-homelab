@@ -1,6 +1,6 @@
 # OpenCharts — static SPA (Vite/React, no backend).
 # Stage 1 builds dist/, stage 2 serves it from unprivileged nginx on :8080.
-FROM node:22.23.5-alpine AS build
+FROM node:26.13.1-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
